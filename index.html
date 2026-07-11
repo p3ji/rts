@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fur &amp; Fury: Tides of Clutter</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; background: #14181d; font-family: 'Segoe UI', system-ui, sans-serif; color: #dfe6ee; }
+    #game { position: fixed; inset: 0; display: block; }
+
+    #topbar {
+      position: fixed; top: 0; left: 0; right: 0; height: 40px;
+      display: flex; align-items: center; gap: 18px; padding: 0 14px;
+      background: linear-gradient(to bottom, rgba(10,13,17,0.92), rgba(10,13,17,0.55));
+      font-size: 15px; z-index: 5; pointer-events: none;
+    }
+    #topbar .res { display: flex; gap: 6px; align-items: center; font-weight: 600; }
+    #topbar .res.blocked #res-sup { color: #ff6655; }
+    #topbar .spacer { flex: 1; }
+    #clock { opacity: 0.8; font-variant-numeric: tabular-nums; }
+    .ico { font-size: 14px; }
+
+    #hud {
+      position: fixed; left: 0; right: 0; bottom: 0; height: 150px;
+      display: flex; gap: 10px; padding: 10px;
+      background: linear-gradient(to top, rgba(10,13,17,0.95), rgba(10,13,17,0.72));
+      z-index: 5;
+    }
+    #sel-panel { display: flex; gap: 10px; width: 340px; min-width: 340px; }
+    #sel-panel .portrait { width: 128px; height: 128px; object-fit: cover; border-radius: 6px; border: 1px solid #3a4553; }
+    .sel-name { font-weight: 700; font-size: 15px; margin-bottom: 3px; }
+    .sel-stats { font-size: 12.5px; color: #9fb2c8; margin-bottom: 5px; }
+    .sel-desc { font-size: 12px; color: #7e8fa3; line-height: 1.35; }
+    .hint { color: #7e8fa3; font-size: 13px; align-self: center; }
+
+    #actions { flex: 1; display: flex; flex-wrap: wrap; gap: 8px; align-content: flex-start; overflow-y: auto; }
+    .action {
+      width: 108px; height: 128px; background: #1d242d; border: 1px solid #37414e; border-radius: 6px;
+      color: #dfe6ee; cursor: pointer; display: flex; flex-direction: column; align-items: center; padding: 5px; gap: 3px;
+    }
+    .action:hover { border-color: #6fa7e8; background: #232c38; }
+    .action.disabled { opacity: 0.45; }
+    .action img { width: 96px; height: 66px; object-fit: cover; border-radius: 4px; }
+    .action span { font-size: 11.5px; font-weight: 600; line-height: 1.1; text-align: center; }
+    .action small { font-size: 10.5px; color: #93a6bc; }
+    .queue { width: 100%; font-size: 12px; color: #9fb2c8; padding: 4px; }
+
+    #minimap { width: 130px; height: 130px; min-width: 130px; border: 1px solid #37414e; border-radius: 6px; cursor: pointer; }
+
+    #dragbox { position: fixed; border: 1px solid #4dff88; background: rgba(77,255,136,0.12); display: none; z-index: 4; pointer-events: none; }
+
+    #toast {
+      position: fixed; top: 52px; left: 50%; transform: translateX(-50%);
+      background: rgba(16,22,29,0.92); border: 1px solid #37414e; padding: 8px 18px; border-radius: 6px;
+      font-size: 14px; opacity: 0; transition: opacity 0.25s; z-index: 6; pointer-events: none;
+    }
+    #toast.show { opacity: 1; }
+    #toast.warn { border-color: #c0392b; color: #ffb0a6; }
+    #toast.warn.show { opacity: 1; }
+
+    .overlay {
+      position: fixed; inset: 0; background: rgba(8,11,15,0.9); z-index: 10;
+      display: none; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
+    }
+    #factionpick h1 { font-size: 34px; letter-spacing: 1px; }
+    #factionpick .sub { color: #93a6bc; margin-top: -18px; }
+    #factiongrid { display: flex; gap: 18px; }
+    .fcard {
+      width: 250px; background: #1a212a; border: 1px solid #37414e; border-radius: 10px; padding: 14px;
+      color: #dfe6ee; cursor: pointer; text-align: left; transition: transform 0.12s, border-color 0.12s;
+    }
+    .fcard:hover { transform: translateY(-4px); border-color: #6fa7e8; }
+    .fcard img { width: 100%; height: 130px; object-fit: cover; border-radius: 6px; }
+    .fcard h3 { margin: 10px 0 6px; font-size: 17px; }
+    .fcard p { font-size: 12.5px; color: #93a6bc; line-height: 1.4; }
+
+    #endtitle { font-size: 52px; letter-spacing: 4px; }
+    #endtitle.win { color: #4dff88; }
+    #endtitle.loss { color: #ff5544; }
+    #endsub { color: #93a6bc; }
+    #endscreen button {
+      background: #2a3542; color: #dfe6ee; border: 1px solid #4a5a6e; padding: 10px 26px;
+      border-radius: 6px; font-size: 16px; cursor: pointer;
+    }
+    #endscreen button:hover { background: #35455a; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="topbar">
+    <div class="res"><span class="ico">◆</span><span id="res-s">0</span></div>
+    <div class="res"><span class="ico">🍊</span><span id="res-z">0</span></div>
+    <div class="res"><span class="ico">👥</span><span id="res-sup">0/0</span></div>
+    <div class="spacer"></div>
+    <div id="clock">0:00</div>
+  </div>
+
+  <div id="hud">
+    <div id="sel-panel"></div>
+    <div id="actions"></div>
+    <canvas id="minimap" width="130" height="130"></canvas>
+  </div>
+
+  <div id="dragbox"></div>
+  <div id="toast"></div>
+
+  <div id="factionpick" class="overlay">
+    <h1>FUR &amp; FURY: TIDES OF CLUTTER</h1>
+    <div class="sub">Choose your faction · destroy the enemy town hall</div>
+    <div id="factiongrid"></div>
+  </div>
+
+  <div id="endscreen" class="overlay">
+    <div id="endtitle"></div>
+    <div id="endsub"></div>
+    <button onclick="location.reload()">Play Again</button>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
