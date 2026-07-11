@@ -11,7 +11,7 @@ export class UI {
     this.getInput = getInput
     this.minimap = $('minimap')
     this.mctx = this.minimap.getContext('2d')
-    this.toastT = 0
+    this.panelSig = ''
     this.minimap.addEventListener('mousedown', (e) => {
       const rect = this.minimap.getBoundingClientRect()
       const fx = (e.clientX - rect.left) / rect.width
@@ -19,6 +19,7 @@ export class UI {
       this.r.camTarget.set((fx - 0.5) * MAP, 0, (fy - 0.5) * MAP)
       this.r.updateCamera()
     })
+    this.tooltip = $('tooltip')
   }
 
   toast(msg, warn = false) {
@@ -26,7 +27,7 @@ export class UI {
     el.textContent = msg
     el.className = warn ? 'warn show' : 'show'
     clearTimeout(this._toastTimer)
-    this._toastTimer = setTimeout(() => { el.className = '' }, 2200)
+    this._toastTimer = setTimeout(() => { el.className = '' }, 2400)
   }
 
   updateTop() {
@@ -40,14 +41,57 @@ export class UI {
     $('clock').textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`
   }
 
+  // Tooltip helpers ------------------------------------------------------------
+
+  attachTip(el, html) {
+    el.addEventListener('mouseenter', () => {
+      this.tooltip.innerHTML = html
+      this.tooltip.style.display = 'block'
+      const r = el.getBoundingClientRect()
+      const tw = this.tooltip.offsetWidth
+      let x = r.left + r.width / 2 - tw / 2
+      x = Math.max(8, Math.min(window.innerWidth - tw - 8, x))
+      this.tooltip.style.left = x + 'px'
+      this.tooltip.style.bottom = (window.innerHeight - r.top + 10) + 'px'
+    })
+    el.addEventListener('mouseleave', () => { this.tooltip.style.display = 'none' })
+  }
+
+  costStr(cost) {
+    let s = `<span class="c-s">◆ ${cost.s}</span>`
+    if (cost.z) s += ` <span class="c-z">🍊 ${cost.z}</span>`
+    if (cost.supply) s += ` <span class="c-p">👥 ${cost.supply}</span>`
+    return s
+  }
+
+  // Selection panel ------------------------------------------------------------
+
+  signature(selected) {
+    if (!selected.length) return 'empty'
+    const f = selected[0]
+    const parts = [selected.map((e) => e.id).join(','), f.constructing ? Math.round(f.progress * 20) : 'x',
+      Math.ceil(f.hp / 4), f.maxShield ? Math.ceil(f.shield / 4) : '']
+    if (f.queue) parts.push(f.queue.map((q) => q.protoId).join('|'), f.queue[0]?.started ? Math.round(f.queue[0].t) : '')
+    parts.push(f.powered === false ? 'unp' : '')
+    parts.push(hasTech(this.game, 0) ? 'T' : 't')
+    return parts.join('#')
+  }
+
   refresh(selected) {
+    this.panelSig = this.signature(selected)
+    this.tooltip.style.display = 'none'
     const panel = $('sel-panel')
     const actions = $('actions')
     actions.innerHTML = ''
+
     if (!selected.length) {
-      panel.innerHTML = `<div class="hint">Drag-select units · Right-click to command · A + click = attack-move · Space = your base</div>`
+      panel.innerHTML = `<div class="hint">
+        <b>Drag-select</b> units &nbsp;·&nbsp; <b>Right-click</b> move / attack / gather / repair
+        &nbsp;·&nbsp; <b>A + click</b> attack-move &nbsp;·&nbsp; <b>Space</b> jump to base
+        &nbsp;·&nbsp; <b>Esc</b> cancel</div>`
       return
     }
+
     const first = selected[0]
     const proto = first.proto
     const portrait = PORTRAITS[proto.portrait] || ''
@@ -55,63 +99,100 @@ export class UI {
     for (const s of selected) counts[s.proto.name] = (counts[s.proto.name] || 0) + 1
     const countStr = Object.entries(counts).map(([n, c]) => c > 1 ? `${n} ×${c}` : n).join(', ')
 
-    let stats = ''
+    let statsHtml = ''
+    let progressHtml = ''
     if (first.kind === 'unit') {
-      stats = `${Math.ceil(first.hp)}/${first.maxHp} HP` + (first.maxShield ? ` · ${Math.ceil(first.shield)} shield` : '') +
-        (proto.dmg ? ` · ${proto.dmg} dmg` : '') + ` · ${proto.role}`
+      statsHtml = `<span class="stat">❤ ${Math.ceil(first.hp)}/${first.maxHp}</span>` +
+        (first.maxShield ? `<span class="stat sh">🛡 ${Math.ceil(first.shield)}/${first.maxShield}</span>` : '') +
+        (proto.dmg ? `<span class="stat">⚔ ${proto.dmg}</span>` : '') +
+        `<span class="stat role">${proto.role}</span>`
     } else {
-      stats = `${Math.ceil(first.hp)}/${first.maxHp} HP` + (first.constructing ? ` · ${Math.round(first.progress * 100)}% built` : '') +
-        (first.proto.needsPower && !first.powered ? ' · ⚠ UNPOWERED' : '')
+      statsHtml = `<span class="stat">❤ ${Math.ceil(first.hp)}/${first.maxHp}</span>` +
+        (first.maxShield ? `<span class="stat sh">🛡 ${Math.ceil(first.shield)}/${first.maxShield}</span>` : '')
+      if (first.constructing) {
+        statsHtml += `<span class="stat warn">🔨 Under construction</span>`
+        progressHtml = `<div class="pbar"><div style="width:${Math.round(first.progress * 100)}%"></div></div>`
+      } else if (first.proto.needsPower && !first.powered) {
+        statsHtml += `<span class="stat warn">⚡ UNPOWERED — needs a Whisker Pylon</span>`
+      }
+    }
+
+    // What does this building do? Always show, even while under construction.
+    let extra = ''
+    if (first.kind === 'building') {
+      const bits = []
+      if (proto.supply) bits.push(`+${proto.supply} supply`)
+      if (proto.trains) bits.push(`Trains: ${proto.trains.map((u) => UNITS[u].name).join(', ')}`)
+      if (proto.kind === 'tech') bits.push('Unlocks Tier 2 & Tier 3 units')
+      if (proto.kind === 'turret') bits.push(`Auto-attacks (${proto.dmg} dmg, range ${proto.range})`)
+      if (proto.kind === 'extractor') bits.push('Workers harvest Zest here')
+      if (bits.length) extra = `<div class="sel-extra">${bits.join(' · ')}</div>`
     }
 
     panel.innerHTML = `
       <img class="portrait" src="${portrait}" alt="">
       <div class="sel-info">
         <div class="sel-name">${countStr}</div>
-        <div class="sel-stats">${stats}</div>
+        <div class="sel-stats">${statsHtml}</div>
+        ${progressHtml}
         <div class="sel-desc">${proto.desc || ''}</div>
+        ${extra}
       </div>`
 
-    // Action buttons
-    if (first.kind === 'building' && !first.constructing && first.proto.trains) {
+    // Action buttons -----------------------------------------------------------
+    if (first.kind === 'building' && first.proto.trains) {
       const tech = hasTech(this.game, 0)
+      const constructing = first.constructing
       for (const uid of first.proto.trains) {
         const u = UNITS[uid]
-        const locked = u.tier >= 2 && !tech
-        const b = this.actionBtn(PORTRAITS[u.portrait], u.name,
-          `${u.cost.s}◆ ${u.cost.z ? u.cost.z + '🍊 ' : ''}${u.cost.supply} supply${locked ? ' — needs Tech' : ''}`, locked)
-        b.onclick = () => {
-          const r = tryQueueUnit(this.game, first, uid)
-          if (!r.ok) this.toast(r.reason, true)
-          this.refresh(selected)
+        const locked = (u.tier >= 2 && !tech) || constructing
+        const lockMsg = constructing ? 'Under construction' : (u.tier >= 2 && !tech) ? 'Requires Tech structure' : ''
+        const b = this.actionBtn(PORTRAITS[u.portrait], u.name, this.costStr(u.cost), locked)
+        this.attachTip(b, `<b>${u.name}</b> <span class="tip-role">${u.role}</span><br>
+          ${this.costStr(u.cost)} · ⏱ ${u.buildTime}s<br>
+          <span class="tip-desc">${u.desc}</span>${lockMsg ? `<br><span class="tip-lock">🔒 ${lockMsg}</span>` : ''}`)
+        if (!locked) {
+          b.onclick = () => {
+            const r = tryQueueUnit(this.game, first, uid)
+            if (!r.ok) this.toast(r.reason, true)
+            this.refresh(selected)
+          }
         }
         actions.appendChild(b)
       }
       if (first.queue.length) {
         const q = document.createElement('div')
         q.className = 'queue'
-        q.textContent = 'Queue: ' + first.queue.map((i) => UNITS[i.protoId].name).join(' → ')
+        const cur = first.queue[0]
+        const curProto = UNITS[cur.protoId]
+        const pct = cur.started ? Math.round((1 - cur.t / curProto.buildTime) * 100) : 0
+        q.innerHTML = `<div class="queue-line">Producing: <b>${curProto.name}</b>${cur.started ? '' : ' (waiting for supply)'}</div>
+          <div class="pbar"><div style="width:${pct}%"></div></div>
+          ${first.queue.length > 1 ? `<div class="queue-line dim">Next: ${first.queue.slice(1).map((i) => UNITS[i.protoId].name).join(' → ')}</div>` : ''}`
         actions.appendChild(q)
       }
     }
+
     if (first.kind === 'unit' && first.proto.worker) {
       const faction = this.game.players[0].faction
       for (const bid of BUILD_MENU[faction]) {
         const bp = BUILDINGS[bid]
-        const b = this.actionBtn(PORTRAITS[bp.portrait], bp.name, `${bp.cost.s}◆${bp.cost.z ? ' ' + bp.cost.z + '🍊' : ''}`)
+        const b = this.actionBtn(PORTRAITS[bp.portrait], bp.name, this.costStr(bp.cost))
+        this.attachTip(b, `<b>${bp.name}</b><br>${this.costStr(bp.cost)} · ⏱ ${bp.buildTime}s<br>
+          <span class="tip-desc">${bp.desc}</span>`)
         b.onclick = () => {
           this.getInput().startPlacing(bid)
-          this.toast(`Placing ${bp.name} — click ground, right-click to cancel`)
+          this.toast(`Placing ${bp.name} — click ground to build, right-click to cancel`)
         }
         actions.appendChild(b)
       }
     }
   }
 
-  actionBtn(img, name, sub, disabled = false) {
+  actionBtn(img, name, subHtml, disabled = false) {
     const b = document.createElement('button')
     b.className = 'action' + (disabled ? ' disabled' : '')
-    b.innerHTML = `<img src="${img}" alt=""><span>${name}</span><small>${sub}</small>`
+    b.innerHTML = `<img src="${img}" alt="" draggable="false"><span>${name}</span><small>${subHtml}</small>`
     return b
   }
 
@@ -128,7 +209,7 @@ export class UI {
   drawMinimap() {
     const ctx = this.mctx
     const S = this.minimap.width
-    ctx.fillStyle = '#20242b'
+    ctx.fillStyle = '#1c2027'
     ctx.fillRect(0, 0, S, S)
     const k = S / MAP
     each(this.game, (e) => {
@@ -142,7 +223,6 @@ export class UI {
         ctx.fillRect(x - s / 2, y - s / 2, s, s)
       }
     })
-    // camera frustum box (approx)
     const t = this.r.camTarget
     ctx.strokeStyle = 'rgba(255,255,255,0.7)'
     const vw = this.r.camDist * 1.1 * k, vh = this.r.camDist * 0.75 * k
@@ -174,9 +254,8 @@ export class UI {
     this.updateTop()
     this.drawMinimap()
     this.drainEvents()
-    // live-refresh selection panel every ~0.5s
-    this._selT = (this._selT || 0) + 1
-    if (this._selT % 30 === 0 && selected.length) this.refresh(selected)
+    // rebuild the panel only when its content actually changed (no hover flicker)
+    if (this.signature(selected) !== this.panelSig) this.refresh(selected)
   }
 }
 

@@ -230,7 +230,7 @@ function acquire(g, u, radius) {
 }
 
 function dealDamage(g, src, target) {
-  g.events.push({ type: 'shot', from: { x: src.x, z: src.z }, to: { x: target.x, z: target.z }, owner: src.owner })
+  g.events.push({ type: 'shot', from: { x: src.x, z: src.z }, to: { x: target.x, z: target.z }, owner: src.owner, splash: !!src.proto.splash })
   applyHit(g, src, target, src.proto.dmg * (src.buffAtk >= 1 ? 1 : 1))
   if (src.proto.splash) {
     each(g, (e) => {
@@ -274,7 +274,7 @@ function buildingTick(g, b, dt) {
     const t = findNearest(g, b, (e) => (e.kind === 'unit' || e.kind === 'building') && e.owner >= 0 && e.owner !== b.owner, b.proto.range)
     if (t && b.atkT <= 0) {
       b.atkT = b.proto.atkCd
-      g.events.push({ type: 'shot', from: { x: b.x, z: b.z }, to: { x: t.x, z: t.z }, owner: b.owner })
+      g.events.push({ type: 'shot', from: { x: b.x, z: b.z }, to: { x: t.x, z: t.z }, owner: b.owner, splash: false })
       applyHit(g, b, t, b.proto.dmg)
     }
   }
@@ -375,33 +375,40 @@ export function cmdRepair(g, units, target) {
   units.forEach((u) => { if (u.proto.repairs) u.order = { type: 'repair', targetId: target.id } })
 }
 
+// Validity check only — no payment, no spawn. Returns snapped coordinates for
+// extractors so the placement ghost can preview the snap.
+export function checkPlacement(g, owner, protoId, x, z) {
+  const proto = BUILDINGS[protoId]
+  if (proto.kind === 'extractor') {
+    const gey = findNearest(g, { x, z }, (e) => e.kind === 'resource' && e.rtype === 'geyser' && !e.extractorId, 3.5)
+    if (!gey) return { ok: false, reason: 'Must be placed on a free Citrus Geyser', x, z }
+    return { ok: true, x: gey.x, z: gey.z, geyserId: gey.id }
+  }
+  let blocked = false
+  each(g, (e) => {
+    if (blocked || e.kind === 'resource') return
+    if (e.kind === 'building' && dist(e, { x, z }) < e.proto.radius + proto.radius + 0.8) blocked = true
+  })
+  let onGeyser = false
+  each(g, (e) => { if (e.kind === 'resource' && e.rtype === 'geyser' && dist(e, { x, z }) < proto.radius + 2) onGeyser = true })
+  if (blocked || onGeyser) return { ok: false, reason: 'Blocked placement', x, z }
+  if (proto.needsPower) {
+    let powered = false
+    each(g, (e) => {
+      if (e.kind === 'building' && e.owner === owner && e.proto.power && !e.constructing && dist(e, { x, z }) <= 24) powered = true
+    })
+    if (!powered) return { ok: false, reason: 'Requires Whisker Pylon power', x, z }
+  }
+  return { ok: true, x, z, geyserId: null }
+}
+
 export function tryPlaceBuilding(g, owner, protoId, x, z, builder) {
   const proto = BUILDINGS[protoId]
   if (!canAfford(g, owner, proto.cost)) return { ok: false, reason: 'Not enough resources' }
-
-  let geyserId = null
-  if (proto.kind === 'extractor') {
-    const gey = findNearest(g, { x, z }, (e) => e.kind === 'resource' && e.rtype === 'geyser' && !e.extractorId, 3.5)
-    if (!gey) return { ok: false, reason: 'Must be placed on a free Citrus Geyser' }
-    x = gey.x; z = gey.z; geyserId = gey.id
-  } else {
-    // spacing check
-    let blocked = false
-    each(g, (e) => {
-      if (blocked || e.kind === 'resource') return
-      if (e.kind === 'building' && dist(e, { x, z }) < e.proto.radius + proto.radius + 0.8) blocked = true
-    })
-    let onGeyser = false
-    each(g, (e) => { if (e.kind === 'resource' && e.rtype === 'geyser' && dist(e, { x, z }) < proto.radius + 2) onGeyser = true })
-    if (blocked || onGeyser) return { ok: false, reason: 'Blocked placement' }
-    if (proto.needsPower) {
-      let powered = false
-      each(g, (e) => {
-        if (e.kind === 'building' && e.owner === owner && e.proto.power && !e.constructing && dist(e, { x, z }) <= 24) powered = true
-      })
-      if (!powered) return { ok: false, reason: 'Requires Whisker Pylon power' }
-    }
-  }
+  const chk = checkPlacement(g, owner, protoId, x, z)
+  if (!chk.ok) return chk
+  x = chk.x; z = chk.z
+  const geyserId = chk.geyserId
 
   pay(g, owner, proto.cost)
   const b = spawnBuilding(g, owner, protoId, x, z, false, geyserId)

@@ -1,6 +1,6 @@
 import { BUILDINGS } from './data.js'
 import { each, dist } from './state.js'
-import { cmdMove, cmdAttack, cmdGather, cmdRepair, tryPlaceBuilding } from './sim.js'
+import { cmdMove, cmdAttack, cmdGather, cmdRepair, tryPlaceBuilding, checkPlacement } from './sim.js'
 
 export class Input {
   constructor(game, renderer, ui) {
@@ -37,7 +37,7 @@ export class Input {
     if (down) this.keys.add(k); else this.keys.delete(k)
     if (!down) return
     if (k === 'a') this.attackModifier = true
-    if (k === 'escape') { this.placing = null; this.attackModifier = false; this.ui.refresh(this.selected) }
+    if (k === 'escape') { this.stopPlacing(); this.attackModifier = false; this.ui.refresh(this.selected) }
     if (k === ' ') {
       // jump camera to base
       let th = null
@@ -49,6 +49,22 @@ export class Input {
 
   startPlacing(protoId) {
     this.placing = { protoId }
+    this.r.setGhost(protoId)
+    this.updateGhost()
+  }
+
+  stopPlacing() {
+    this.placing = null
+    this.r.clearGhost()
+  }
+
+  updateGhost() {
+    if (!this.placing) return
+    const n = { x: (this.mouse.x / window.innerWidth) * 2 - 1, y: -(this.mouse.y / window.innerHeight) * 2 + 1 }
+    const pt = this.r.screenToGround(n.x, n.y)
+    if (!pt) return
+    const chk = checkPlacement(this.game, 0, this.placing.protoId, pt.x, pt.z)
+    this.r.moveGhost(chk.x ?? pt.x, chk.z ?? pt.z, chk.ok)
   }
 
   onDown(e) {
@@ -65,7 +81,7 @@ export class Input {
       }
       this.drag = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, moved: false }
     } else if (e.button === 2) {
-      if (this.placing) { this.placing = null; this.ui.refresh(this.selected); return }
+      if (this.placing) { this.stopPlacing(); this.ui.refresh(this.selected); return }
       this.rightCommand(n)
     } else if (e.button === 1) {
       this.pan = { x: e.clientX, y: e.clientY }
@@ -75,6 +91,7 @@ export class Input {
 
   onMove(e) {
     this.mouse = { x: e.clientX, y: e.clientY }
+    if (this.placing) this.updateGhost()
     if (this.drag) {
       this.drag.x1 = e.clientX; this.drag.y1 = e.clientY
       if (Math.abs(this.drag.x1 - this.drag.x0) + Math.abs(this.drag.y1 - this.drag.y0) > 6) this.drag.moved = true
@@ -184,10 +201,10 @@ export class Input {
   confirmPlace(n) {
     const pt = this.r.screenToGround(n.x, n.y)
     const builder = this.selected.find((u) => u.proto?.worker && !u.dead)
-    if (!builder) { this.placing = null; return }
+    if (!builder) { this.stopPlacing(); return }
     const res = tryPlaceBuilding(this.game, 0, this.placing.protoId, pt.x, pt.z, builder)
     if (res.ok) {
-      this.placing = null
+      this.stopPlacing()
       this.ui.toast(`Constructing ${BUILDINGS[res.building.protoId].name}`)
       this.ui.refresh(this.selected)
     } else {
@@ -214,7 +231,7 @@ export class Input {
     if (m.x <= edge) dx -= 1
     if (m.x >= window.innerWidth - edge) dx += 1
     if (m.y <= edge) dz -= 1
-    if (m.y >= window.innerHeight - edge && m.y < window.innerHeight - 150) dz += 1 // avoid HUD area
+    if (m.y >= window.innerHeight - edge && m.y < window.innerHeight - 200) dz += 1 // avoid HUD area
     if (dx || dz) {
       this.r.camTarget.x += dx * s
       this.r.camTarget.z += dz * s
