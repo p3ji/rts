@@ -19,7 +19,7 @@ export function mulberry32(seed) {
   }
 }
 
-export function createGame({ aiCount = 1, difficulty = 'normal', seed = null } = {}) {
+export function createGame({ aiCount = 1, humanCount = 1, difficulty = 'normal', seed = null } = {}) {
   const rngSeed = seed ?? Math.floor(Math.random() * 2 ** 31)
   const rnd = mulberry32(rngSeed)
   const diff = DIFFICULTY[difficulty] || DIFFICULTY.normal
@@ -54,13 +54,16 @@ export function createGame({ aiCount = 1, difficulty = 'normal', seed = null } =
     },
   }
 
-  const nPlayers = 1 + Math.max(1, Math.min(3, aiCount))
+  // First `humanCount` slots are human-controlled (local or networked); the rest are AI.
+  const nHumans = Math.max(1, Math.min(2, humanCount))
+  const nPlayers = Math.min(4, nHumans + Math.max(0, aiCount))
   for (let i = 0; i < nPlayers; i++) {
+    const isAI = i >= nHumans
     g.players.push({
       name: PLAYER_NAMES[i], color: PLAYER_COLORS[i],
       w: 200, g: 100, age: 1, ageUp: null, // ageUp: { t } while researching
-      isAI: i > 0, alive: true,
-      ai: i > 0 ? { t: rnd() * 2, nextWave: diff.waveFirst, waveSize: diff.waveStart, attacking: false } : null,
+      isAI, alive: true,
+      ai: isAI ? { t: rnd() * 2, nextWave: diff.waveFirst, waveSize: diff.waveStart, attacking: false } : null,
     })
   }
 

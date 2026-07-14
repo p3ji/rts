@@ -2,6 +2,7 @@ import { UNITS, BUILDINGS, BUILD_MENU, DIFFICULTY, PLAYER_COLORS, AGE_UP_COST } 
 import { each, supplyOf, ageOf, hasTemple, canAfford, isVisible, isExplored, MAP } from './state.js'
 import { issue } from './sim.js'
 import { PORTRAITS } from './render.js'
+import { NetClient, defaultRelayUrl } from './net.js'
 
 const $ = (id) => document.getElementById(id)
 const hex = (c) => '#' + c.toString(16).padStart(6, '0')
@@ -340,8 +341,83 @@ export function homeScreen(onStart) {
 
   $('btn-start').onclick = () => {
     el.style.display = 'none'
-    onStart({ aiCount, difficulty })
+    onStart({ mode: 'ai', aiCount, difficulty })
   }
+
+  setupOnlineTab(el, onStart)
+}
+
+// ---- online lobby: mode tabs + host/join flow --------------------------------
+
+function setupOnlineTab(homeEl, onStart) {
+  const tabAi = $('tab-ai'), tabOnline = $('tab-online')
+  const cardAi = $('card-ai'), cardOnline = $('card-online')
+  const choice = $('online-choice'), joinForm = $('join-form'), status = $('lobby-status')
+  const relayInput = $('online-relay')
+  relayInput.value = defaultRelayUrl()
+
+  tabAi.onclick = () => {
+    tabAi.classList.add('sel'); tabOnline.classList.remove('sel')
+    cardAi.style.display = ''; cardOnline.style.display = 'none'
+  }
+  tabOnline.onclick = () => {
+    tabOnline.classList.add('sel'); tabAi.classList.remove('sel')
+    cardAi.style.display = 'none'; cardOnline.style.display = ''
+  }
+
+  let net = null
+  const showChoice = () => {
+    net?.close(); net = null
+    choice.style.display = ''; joinForm.style.display = 'none'; status.classList.remove('show')
+    $('lobby-code').style.display = 'none'
+  }
+  const showStatus = (msg) => {
+    choice.style.display = 'none'; joinForm.style.display = 'none'
+    status.classList.add('show')
+    $('lobby-msg').textContent = msg
+  }
+
+  $('btn-lobby-cancel').onclick = showChoice
+  $('btn-join').onclick = () => { choice.style.display = 'none'; joinForm.style.display = ''; $('join-code').focus() }
+
+  $('btn-host').onclick = () => {
+    showStatus('Connecting to relay…')
+    net = new NetClient(relayInput.value.trim())
+    net.connect().then(() => {
+      net.host()
+      net.onMessage = (msg) => {
+        if (msg.type === 'hosted') {
+          $('lobby-code').textContent = msg.code
+          $('lobby-code').style.display = ''
+          showStatus('Share this code — waiting for your rival to join…')
+        } else if (msg.type === 'start') {
+          homeEl.style.display = 'none'
+          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot })
+        }
+      }
+      net.onClose = () => showStatus('Connection lost. Try again.')
+    }).catch(() => showStatus('Could not reach the relay server. Check the address and that it is running.'))
+  }
+
+  $('btn-join-confirm').onclick = () => {
+    const code = $('join-code').value.trim().toUpperCase()
+    if (code.length !== 4) return
+    showStatus('Connecting to relay…')
+    net = new NetClient(relayInput.value.trim())
+    net.connect().then(() => {
+      net.join(code)
+      net.onMessage = (msg) => {
+        if (msg.type === 'joined') showStatus('Joined — waiting for the match to start…')
+        else if (msg.type === 'error') showStatus(msg.reason || 'Could not join that room.')
+        else if (msg.type === 'start') {
+          homeEl.style.display = 'none'
+          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot })
+        }
+      }
+      net.onClose = () => showStatus('Connection lost. Try again.')
+    }).catch(() => showStatus('Could not reach the relay server. Check the address and that it is running.'))
+  }
+  $('join-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-join-confirm').click() })
 }
 
 export function showLoading(show, frac = 0) {

@@ -19,7 +19,7 @@ export function tick(g, dt) {
   const batch = g.commandsByTick.get(g.tick)
   if (batch) { for (const c of batch) applyCommand(g, c); g.commandsByTick.delete(g.tick) }
 
-  for (let i = 1; i < g.players.length; i++) aiThink(g, i, dt)
+  for (let i = 0; i < g.players.length; i++) if (g.players[i].isAI) aiThink(g, i, dt)
 
   each(g, (e) => {
     if (e.kind === 'unit') unitTick(g, e, dt)
@@ -376,8 +376,11 @@ function winCheck(g) {
       g.events.push({ type: 'eliminated', owner: i })
     }
   }
-  if (!g.players[0].alive) g.over = 'loss'
-  else if (g.players.slice(1).every((p) => !p.alive)) g.over = 'win'
+  // This branch is derived from `alive[]`, which every client computes identically
+  // from shared entity state, so both sides of an online match reach g.over on the
+  // same tick — only the win/loss label differs, per each client's own localPlayer.
+  if (!g.players[g.localPlayer].alive) g.over = 'loss'
+  else if (g.players.filter((p) => p.alive).length <= 1) g.over = 'win'
 }
 
 // ---- command layer (deterministic, network-ready) ---------------------------
@@ -385,13 +388,22 @@ function winCheck(g) {
 // tick, then applied identically on every client. The AI runs inside the tick
 // and calls the cmd* helpers directly — it is already deterministic via g.rng.
 
-// Schedule a command; returns the tick it will execute on.
+// Schedule a locally-issued command; returns the tick it will execute on.
+// If g.onCommand is set (wired by the net layer for online matches) it is notified
+// so the command can be broadcast to the peer tagged with the same exec tick.
 export function issue(g, cmd) {
   const et = g.tick + g.inputDelay
-  let arr = g.commandsByTick.get(et)
-  if (!arr) { arr = []; g.commandsByTick.set(et, arr) }
-  arr.push(cmd)
+  scheduleAt(g, et, cmd)
+  g.onCommand?.(et, cmd)
   return et
+}
+
+// Schedule a command for an exact exec tick — used both by issue() above and by
+// the net layer when applying a command received from a remote peer.
+export function scheduleAt(g, execTick, cmd) {
+  let arr = g.commandsByTick.get(execTick)
+  if (!arr) { arr = []; g.commandsByTick.set(execTick, arr) }
+  arr.push(cmd)
 }
 
 function resolveUnits(g, ids) {

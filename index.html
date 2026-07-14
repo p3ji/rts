@@ -141,6 +141,46 @@
     #btn-start:active { transform: translateY(2px); box-shadow: 0 2px 0 #6a4c14; }
     #home .credit { color: #8fa878; font-size: 12.5px; }
 
+    /* ---- mode tabs + online lobby ---- */
+    .modetabs { display: flex; gap: 8px; }
+    .modetab {
+      flex: 1; padding: 9px; background: transparent; color: #cdbfa0; border: 1px solid #5c4c2c;
+      border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 700; letter-spacing: 0.5px;
+      text-transform: uppercase; cursor: pointer;
+    }
+    .modetab.sel { background: rgba(30,24,13,0.92); color: #ffe9b0; border-color: #8a6f3e; }
+    .online-row { display: flex; gap: 10px; }
+    .online-row .opt { flex: 1; }
+    #online-relay {
+      background: #17130a; border: 1px solid #4a3d26; color: #a89878; border-radius: 6px;
+      padding: 7px 9px; font-size: 12px; font-family: inherit; width: 100%;
+    }
+    .relay-row { display: flex; flex-direction: column; gap: 5px; }
+    .relay-row label { font-size: 11px; color: #8a7c5c; letter-spacing: 0.5px; text-transform: uppercase; }
+    #join-code {
+      background: #17130a; border: 1px solid #5c4c2c; color: #f5ecd6; border-radius: 8px;
+      padding: 12px; font-size: 22px; letter-spacing: 6px; text-align: center; font-weight: 800;
+      font-family: inherit; text-transform: uppercase;
+    }
+    #join-code::placeholder { letter-spacing: 3px; font-weight: 400; color: #6a5c40; }
+    .lobby-status { display: none; flex-direction: column; gap: 14px; align-items: center; text-align: center; }
+    .lobby-status.show { display: flex; }
+    .lobby-code {
+      font-size: 40px; font-weight: 800; letter-spacing: 10px; color: #ffe9b0;
+      background: #17130a; border: 2px dashed #8a6f3e; border-radius: 10px; padding: 14px 22px;
+    }
+    .lobby-msg { color: #cdbfa0; font-size: 15px; }
+    .spinner {
+      width: 22px; height: 22px; border: 3px solid #4a3d26; border-top-color: #d8a52e;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #btn-lobby-cancel {
+      background: transparent; color: #cdbfa0; border: 1px solid #5c4c2c; padding: 9px 20px;
+      border-radius: 7px; font-size: 14px; cursor: pointer;
+    }
+    #btn-lobby-cancel:hover { border-color: #a8854a; color: #ffe9b0; }
+
     #loading { z-index: 11; }
     #loading .load-label { font-size: 17px; color: #e8dcc0; }
     #loadbar { width: 340px; height: 14px; background: #17120a; border: 1px solid #5c4c2c; border-radius: 7px; overflow: hidden; }
@@ -183,7 +223,13 @@
   <div id="home" class="overlay">
     <h1>KINGDOMS OF WOBBLETON</h1>
     <div class="sub">A cozy boxy real-time strategy · gather, build, age up, conquer</div>
-    <div class="setup-card">
+
+    <div id="mode-tabs" class="modetabs" style="width: 420px;">
+      <button class="modetab sel" id="tab-ai">Vs AI</button>
+      <button class="modetab" id="tab-online">Online 1v1</button>
+    </div>
+
+    <div class="setup-card" id="card-ai">
       <div class="setup-row">
         <label>Rival kingdoms</label>
         <div class="optrow" id="opt-ai"></div>
@@ -194,6 +240,34 @@
       </div>
       <button id="btn-start">⚔ &nbsp;Start the Match</button>
     </div>
+
+    <div class="setup-card" id="card-online" style="display:none;">
+      <div class="setup-row" id="online-choice">
+        <label>Play with a friend</label>
+        <div class="online-row">
+          <button class="opt" id="btn-host">Host a match</button>
+          <button class="opt" id="btn-join">Join with code</button>
+        </div>
+        <div class="relay-row">
+          <label>Relay server</label>
+          <input id="online-relay" type="text" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+
+      <div class="setup-row" id="join-form" style="display:none;">
+        <label>Enter room code</label>
+        <input id="join-code" type="text" maxlength="4" autocomplete="off" spellcheck="false" placeholder="ABCD">
+        <button id="btn-join-confirm" class="opt">Join</button>
+      </div>
+
+      <div class="lobby-status" id="lobby-status">
+        <div class="spinner"></div>
+        <div class="lobby-code" id="lobby-code" style="display:none;"></div>
+        <div class="lobby-msg" id="lobby-msg">Connecting…</div>
+        <button id="btn-lobby-cancel">Cancel</button>
+      </div>
+    </div>
+
     <div class="credit">Models by Quaternius (CC0) · Every match generates a new map</div>
   </div>
 

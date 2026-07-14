@@ -400,7 +400,7 @@ export class Renderer {
   entityVisible(e) {
     const f = this.game.fog
     if (!f || !f.enabled) return true
-    if (e.owner === 0) return true
+    if (e.owner === this.game.localPlayer) return true
     if (e.kind === 'unit') return isVisible(this.game, e.x, e.z)
     return isExplored(this.game, e.x, e.z)
   }
@@ -600,7 +600,7 @@ export class Renderer {
   setGhost(protoId) {
     this.clearGhost()
     const proto = BUILDINGS[protoId]
-    const body = modelInstance(buildingModelName(protoId, this.game.players[0].age), MODEL_FOOTPRINT[protoId])
+    const body = modelInstance(buildingModelName(protoId, this.game.players[this.game.localPlayer].age), MODEL_FOOTPRINT[protoId])
     const grp = new THREE.Group()
     grp.add(body)
     grp.traverse((m) => {
