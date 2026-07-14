@@ -503,6 +503,19 @@ export class Renderer {
     grp.position.set(e.x, 0, e.z)
     grp.userData.entityId = e.id
 
+    // Invisible solid hit-disc for reliable click/raycast picking. Some glTF models
+    // (e.g. the farm's fenced wheat plot) have real gaps in their geometry near the
+    // footprint center, so a precise ray can miss the decorative mesh entirely —
+    // this guarantees anything within the footprint radius is always clickable.
+    const hitRadius = (e.proto?.radius ?? e.radius ?? 1) * 1.05
+    const hitDisc = new THREE.Mesh(
+      new THREE.CircleGeometry(hitRadius, 16),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+    )
+    hitDisc.rotation.x = -Math.PI / 2
+    hitDisc.position.y = e.kind === 'building' ? 1.0 : 0.5
+    grp.add(hitDisc)
+
     if (e.kind === 'resource') {
       grp.add(this.resourceMesh(e))
       grp.rotation.y = e.rot || 0

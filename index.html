@@ -23,11 +23,11 @@
     #topbar .spacer { flex: 1; }
     #age-ind { color: #e8c88a; font-weight: 600; font-size: 15px; }
     #clock { opacity: 0.85; font-variant-numeric: tabular-nums; font-weight: 600; }
-    #btn-mute {
+    #btn-mute, #btn-army {
       pointer-events: auto; background: transparent; border: none; color: #e8dcc0;
       font-size: 18px; cursor: pointer; opacity: 0.85; padding: 4px;
     }
-    #btn-mute:hover { opacity: 1; }
+    #btn-mute:hover, #btn-army:hover { opacity: 1; }
 
     /* ---- bottom HUD ---- */
     #hud {
@@ -68,12 +68,26 @@
     .action small { font-size: 13px; color: #cdbfa0; display: flex; gap: 8px; }
     .c-w { color: #cf9c5e; } .c-g { color: #f0c04a; } .c-p { color: #d1c4a4; }
 
+    .ordbtn { width: 84px; height: 170px; justify-content: center; }
+    .ordbtn .ordicon {
+      width: 100%; height: 92px; display: flex; align-items: center; justify-content: center;
+      font-size: 40px; background: #223018; border-radius: 5px;
+    }
+
     .queue { width: 100%; font-size: 14px; color: #cdbfa0; padding: 6px 2px; display: flex; flex-direction: column; gap: 5px; }
     .queue-line b { color: #f0ead8; }
     .queue-line.dim { color: #94886a; font-size: 13px; }
 
-    /* production queue chips — always visible beside the selection portrait */
-    .qchips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+    /* production queue strip — pinned above the HUD, never clipped by its fixed height */
+    #queue-strip {
+      position: fixed; left: 0; right: 0; bottom: 196px; z-index: 5;
+      display: none; align-items: center; gap: 10px; padding: 8px 16px;
+      background: linear-gradient(to top, rgba(26,21,12,0.94), rgba(26,21,12,0.55));
+      border-top: 1px solid #4a3d26;
+    }
+    #queue-strip.show { display: flex; }
+    #queue-strip .qlabel { font-size: 13px; color: #a89a78; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    .qchips { display: flex; gap: 6px; flex-wrap: wrap; }
     .qchip {
       position: relative; width: 38px; height: 38px; border-radius: 6px; overflow: hidden;
       border: 1px solid #5c4c2c; background: #17120a;
@@ -232,8 +246,11 @@
     <div class="spacer"></div>
     <div id="age-ind">Age I — Village Age</div>
     <div id="clock">0:00</div>
+    <button id="btn-army" title="Select all army units">⚔</button>
     <button id="btn-mute" title="Mute/unmute">🔊</button>
   </div>
+
+  <div id="queue-strip"><span class="qlabel">Producing</span><div class="qchips" id="qchips-row"></div></div>
 
   <div id="hud">
     <div id="sel-panel"></div>

@@ -333,7 +333,10 @@ export function refund(g, owner, cost) {
 }
 
 export function autoGather(g, u) {
-  const node = findNearest(g, u, (e) => e.kind === 'resource' && e.amount > 0, 65)
+  // No radius cap: once the resources near a base are exhausted, idle workers
+  // (player or AI) should path anywhere on the map to keep the economy alive
+  // rather than sit idle forever.
+  const node = findNearest(g, u, (e) => e.kind === 'resource' && e.amount > 0)
   if (node) u.order = { type: 'gather', nodeId: node.id }
 }
 

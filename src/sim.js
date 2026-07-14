@@ -65,6 +65,13 @@ function unitTick(g, u, dt) {
       if (arrive(g, u, o.x, o.z, 0.8, dt)) u.order = { type: 'idle' }
       break
     }
+    case 'patrol': {
+      const t = acquire(g, u, Math.max(u.proto.aggro, 7))
+      if (t) { u.order = { type: 'attack', targetId: t.id, resume: o }; break }
+      const tx = o.toB ? o.bx : o.ax, tz = o.toB ? o.bz : o.az
+      if (arrive(g, u, tx, tz, 0.8, dt)) o.toB = !o.toB
+      break
+    }
     case 'attack': {
       const t = g.entities.get(o.targetId)
       if (!t || t.dead) { u.order = o.resume || { type: 'idle' }; break }
@@ -114,9 +121,11 @@ function gatherTick(g, u, o, dt) {
   if (u.carry) { u.order = { type: 'return', backTo: o }; return }
   let node = g.entities.get(o.nodeId)
   if (!node || node.dead || node.amount <= 0) {
+    // No radius cap here either: local resources may be fully depleted, so the
+    // next-nearest node — wherever on the map it is — is the right fallback.
     const sameType = node?.rtype
-    const next = findNearest(g, u, (e) => e.kind === 'resource' && e.amount > 0 && (!sameType || e.rtype === sameType), 50)
-      || findNearest(g, u, (e) => e.kind === 'resource' && e.amount > 0, 50)
+    const next = findNearest(g, u, (e) => e.kind === 'resource' && e.amount > 0 && (!sameType || e.rtype === sameType))
+      || findNearest(g, u, (e) => e.kind === 'resource' && e.amount > 0)
     if (next) o.nodeId = next.id
     else u.order = { type: 'idle' }
     return
@@ -436,6 +445,11 @@ export function applyCommand(g, c) {
       break
     }
     case 'rally': { const b = g.entities.get(c.b); if (b && !b.dead) b.rally = { x: c.x, z: c.z }; break }
+    case 'patrol': {
+      const u = resolveUnits(g, c.units)
+      u.forEach((w) => { w.order = { type: 'patrol', ax: w.x, az: w.z, bx: c.x, bz: c.z, toB: true } })
+      break
+    }
     case 'build': {
       const b = g.entities.get(c.builder)
       const r = tryPlaceBuilding(g, c.p, c.proto, c.x, c.z, b && !b.dead ? b : null)
@@ -479,7 +493,7 @@ export function checksum(g) {
   return h >>> 0
 }
 
-const ORDER_CODE = { idle: 1, move: 2, attackmove: 3, attack: 4, gather: 5, return: 6, build: 7, repair: 8 }
+const ORDER_CODE = { idle: 1, move: 2, attackmove: 3, attack: 4, gather: 5, return: 6, build: 7, repair: 8, patrol: 9 }
 
 // ---- commands (player + AI use the same API) --------------------------------
 
@@ -612,7 +626,7 @@ function aiThink(g, owner, dt) {
     return n && n.rtype === 'gold'
   })
   if (onGold.length < Math.min(4, Math.floor(workers.length / 3))) {
-    const goldNode = findNearest(g, th, (e) => e.kind === 'resource' && e.rtype === 'gold' && e.amount > 0, 60)
+    const goldNode = findNearest(g, th, (e) => e.kind === 'resource' && e.rtype === 'gold' && e.amount > 0)
     const w = workers.find((w2) => w2.order.type === 'gather' && g.entities.get(w2.order.nodeId)?.rtype === 'wood')
     if (goldNode && w) w.order = { type: 'gather', nodeId: goldNode.id }
   }

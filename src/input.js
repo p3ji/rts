@@ -12,6 +12,8 @@ export class Input {
     this.selected = []
     this.inspected = null // a resource node clicked to inspect (read-only, not an actionable selection)
     this.attackModifier = false
+    this.orderMode = null // 'move' | 'attack' | 'patrol' while armed from an action button, awaiting the target click
+    this.groups = {} // control groups: digit -> array of unit ids (Ctrl+digit sets, digit recalls)
     this.placing = null // { protoId, valid }
     this.drag = null // {x0,y0,x1,y1}
     this.keys = new Set()
@@ -47,7 +49,22 @@ export class Input {
     if (!down) return
     if (k === 'enter') { this.openChat(); e.preventDefault(); return }
     if (k === 'a') this.attackModifier = true
-    if (k === 'escape') { this.stopPlacing(); this.attackModifier = false; this.ui.refresh(this.selected) }
+    if (k === 'escape') { this.stopPlacing(); this.attackModifier = false; this.orderMode = null; this.ui.refresh(this.selected) }
+    if (/^[0-9]$/.test(k)) {
+      e.preventDefault() // stop the browser from treating Ctrl+digit as a tab-switch shortcut
+      if (e.ctrlKey) {
+        this.groups[k] = this.selected.filter((u) => u.kind === 'unit' && !u.dead).map((u) => u.id)
+        this.ui.toast(`Control group ${k} set (${this.groups[k].length} units)`)
+      } else {
+        const ents = (this.groups[k] || []).map((id) => this.game.entities.get(id)).filter((e2) => e2 && !e2.dead)
+        if (ents.length) {
+          this.clearSelection()
+          for (const ent of ents) { ent.selected = true; this.selected.push(ent) }
+          this.ui.refresh(this.selected)
+        }
+      }
+      return
+    }
     if (k === ' ') {
       // jump camera to base
       let th = null
@@ -96,6 +113,50 @@ export class Input {
     }
   }
 
+  // ---- order-mode buttons (Move/Attack/Patrol): arm a mode, next left-click confirms it ----
+  armOrder(mode) {
+    this.orderMode = mode
+    this.stopPlacing()
+    this.ui.toast(`${mode[0].toUpperCase()}${mode.slice(1)} — click a target (right-click/Esc to cancel)`)
+  }
+
+  confirmOrderMode(n) {
+    const g = this.game, me = g.localPlayer
+    const mode = this.orderMode
+    this.orderMode = null
+    const units = this.selected.filter((u) => u.kind === 'unit' && !u.dead)
+    if (!units.length) return
+    const target = this.r.pickEntity(n.x, n.y)
+    const pt = this.r.screenToGround(n.x, n.y)
+    if (!pt) return
+
+    if (mode === 'move') {
+      issue(g, { t: 'move', p: me, units: ids(units), x: pt.x, z: pt.z, am: false })
+      this.r.orderFx(pt.x, pt.z, PLAYER_COLORS[me])
+    } else if (mode === 'attack') {
+      if (target && !target.dead && target.owner !== undefined && target.owner >= 0 && target.owner !== me) {
+        issue(g, { t: 'attack', p: me, units: ids(units), target: target.id })
+        this.r.orderFx(target.x, target.z, 0xe0483a)
+      } else {
+        issue(g, { t: 'move', p: me, units: ids(units), x: pt.x, z: pt.z, am: true })
+        this.r.orderFx(pt.x, pt.z, 0xe0483a)
+      }
+    } else if (mode === 'patrol') {
+      issue(g, { t: 'patrol', p: me, units: ids(units), x: pt.x, z: pt.z })
+      this.r.orderFx(pt.x, pt.z, PLAYER_COLORS[me], true)
+    }
+    this.ui.refresh(this.selected)
+  }
+
+  selectAllArmy() {
+    this.clearSelection()
+    each(this.game, (e) => {
+      if (e.owner === this.game.localPlayer && e.kind === 'unit' && !e.proto.worker) { e.selected = true; this.selected.push(e) }
+    })
+    this.ui.refresh(this.selected)
+    this.ui.toast(this.selected.length ? `Selected ${this.selected.length} army units` : 'No army units to select', !this.selected.length)
+  }
+
   startPlacing(protoId) {
     this.placing = { protoId }
     this.r.setGhost(protoId)
@@ -121,6 +182,7 @@ export class Input {
     const n = this.nxy(e)
     if (e.button === 0) {
       if (this.placing) { this.confirmPlace(n); return }
+      if (this.orderMode) { this.confirmOrderMode(n); return }
       if (this.attackModifier) {
         const pt = this.r.screenToGround(n.x, n.y)
         const units = this.selected.filter((u) => u.kind === 'unit' && !u.dead)
@@ -134,6 +196,7 @@ export class Input {
       this.drag = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, moved: false }
     } else if (e.button === 2) {
       if (this.placing) { this.stopPlacing(); this.ui.refresh(this.selected); return }
+      if (this.orderMode) { this.orderMode = null; this.ui.refresh(this.selected); return }
       this.rightCommand(n)
     } else if (e.button === 1) {
       this.pan = { x: e.clientX, y: e.clientY }
@@ -172,7 +235,8 @@ export class Input {
       el.style.cursor = chk?.ok ? 'copy' : 'not-allowed'
       return
     }
-    if (this.attackModifier) { el.style.cursor = 'crosshair'; return }
+    if (this.attackModifier || this.orderMode === 'attack' || this.orderMode === 'patrol') { el.style.cursor = 'crosshair'; return }
+    if (this.orderMode === 'move') { el.style.cursor = 'pointer'; return }
     const units = this.selected.filter((u) => u.kind === 'unit' && !u.dead)
     const ent = this.r.pickEntity(n.x, n.y)
     if (!ent) { el.style.cursor = 'default'; return }

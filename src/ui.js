@@ -30,6 +30,8 @@ export class UI {
     const muteBtn = $('btn-mute')
     muteBtn.textContent = audio.muted ? '🔇' : '🔊'
     muteBtn.onclick = () => { muteBtn.textContent = audio.toggleMuted() ? '🔇' : '🔊' }
+
+    $('btn-army').onclick = () => { audio.click(); this.getInput().selectAllArmy() }
   }
 
   toast(msg, warn = false) {
@@ -90,6 +92,7 @@ export class UI {
   refresh(selected, inspected = null) {
     this.panelSig = this.signature(selected, inspected)
     this.tooltip.style.display = 'none'
+    this.updateQueueStrip(selected)
     const panel = $('sel-panel')
     const actions = $('actions')
     actions.innerHTML = ''
@@ -99,7 +102,9 @@ export class UI {
       panel.innerHTML = `<div class="hint">
         <b>Drag-select</b> units &nbsp;·&nbsp; <b>Right-click</b> move / attack / gather / repair
         &nbsp;·&nbsp; <b>A + click</b> attack-move &nbsp;·&nbsp; <b>Space</b> jump to base
-        &nbsp;·&nbsp; <b>Esc</b> cancel</div>`
+        &nbsp;·&nbsp; <b>Esc</b> cancel
+        <br><b>Ctrl+0-9</b> set a control group &nbsp;·&nbsp; <b>0-9</b> recall it
+        &nbsp;·&nbsp; <b>⚔</b> in the top bar selects your whole army</div>`
       return
     }
 
@@ -137,8 +142,6 @@ export class UI {
       if (bits.length) extra = `<div class="sel-extra">${bits.join(' · ')}</div>`
     }
 
-    const queueHtml = first.kind === 'building' && first.queue?.length ? this.queueChipsHtml(first) : ''
-
     panel.innerHTML = `
       <img class="portrait" src="${portrait}" alt="">
       <div class="sel-info">
@@ -147,7 +150,6 @@ export class UI {
         ${progressHtml}
         <div class="sel-desc">${proto.desc || ''}</div>
         ${extra}
-        ${queueHtml}
       </div>`
 
     // ---- action buttons ----
@@ -193,6 +195,22 @@ export class UI {
       }
     }
 
+    if (first.kind === 'unit') {
+      // click-a-button, click-a-target order buttons — the same orders right-click and
+      // A+click already do, surfaced for anyone who doesn't know those gestures
+      const orders = [
+        { mode: 'move', icon: '🏃', label: 'Move', desc: 'Click a spot to walk there.' },
+        { mode: 'attack', icon: '⚔', label: 'Attack', desc: 'Click an enemy to attack it, or ground to attack-move.' },
+        { mode: 'patrol', icon: '🔁', label: 'Patrol', desc: 'Click a spot to patrol back and forth, engaging enemies along the way.' },
+      ]
+      for (const o of orders) {
+        const b = this.orderBtn(o.icon, o.label)
+        this.attachTip(b, `<b>${o.label}</b><br><span class="tip-desc">${o.desc}</span>`)
+        b.onclick = () => this.getInput().armOrder(o.mode)
+        actions.appendChild(b)
+      }
+    }
+
     if (first.kind === 'unit' && first.proto.worker) {
       for (const bid of BUILD_MENU) {
         const bp = BUILDINGS[bid]
@@ -208,8 +226,21 @@ export class UI {
     }
   }
 
-  // Compact icon+count chips for a building's production queue — shown beside the
-  // portrait (always visible) rather than in the scrollable action grid below it.
+  // Pinned above the HUD (not inside the fixed-height sel-panel) so it's never
+  // clipped regardless of how much other selection info is showing.
+  updateQueueStrip(selected) {
+    const first = selected[0]
+    const strip = $('queue-strip')
+    if (first && first.kind === 'building' && first.queue?.length) {
+      strip.classList.add('show')
+      $('qchips-row').innerHTML = this.queueChipsHtml(first)
+    } else {
+      strip.classList.remove('show')
+      $('qchips-row').innerHTML = ''
+    }
+  }
+
+  // Compact icon+count chips for a building's production queue.
   queueChipsHtml(b) {
     const groups = []
     for (const q of b.queue) {
@@ -231,7 +262,7 @@ export class UI {
         ${isCur ? `<div class="qprog" style="width:${pct}%"></div>` : ''}
       </div>`
     }).join('')
-    return `<div class="qchips">${chips}</div>`
+    return chips
   }
 
   // Read-only info panel for a clicked resource node (not an actionable selection).
@@ -260,6 +291,16 @@ export class UI {
     b.className = 'action' + (disabled ? ' disabled' : '')
     b.innerHTML = `<img src="${img}" alt="" draggable="false"><span>${name}</span><small>${subHtml}</small>`
     if (!disabled) b.addEventListener('click', () => audio.click())
+    return b
+  }
+
+  // Icon-glyph variant of actionBtn for order-mode buttons (Move/Attack/Patrol)
+  // that have no per-item portrait to show.
+  orderBtn(icon, name) {
+    const b = document.createElement('button')
+    b.className = 'action ordbtn'
+    b.innerHTML = `<div class="ordicon">${icon}</div><span>${name}</span>`
+    b.addEventListener('click', () => audio.click())
     return b
   }
 
