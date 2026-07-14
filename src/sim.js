@@ -223,8 +223,17 @@ function arrive(g, u, tx, tz, eps, dt) {
 }
 
 function separation(g) {
+  // Precompute both lists once. The building-overlap check used to call each()
+  // — a full scan of every entity (units+buildings+resources) — once PER UNIT,
+  // making this O(units * totalEntities) instead of the intended O(units *
+  // buildings). At dozens of units and ~150 total entities that's tens of
+  // thousands of wasted iterations per tick, 30x/sec, worsening as armies grow.
   const units = []
-  each(g, (e) => { if (e.kind === 'unit') units.push(e) })
+  const buildings = []
+  each(g, (e) => {
+    if (e.kind === 'unit') units.push(e)
+    else if (e.kind === 'building') buildings.push(e)
+  })
   for (let i = 0; i < units.length; i++) {
     const a = units[i]
     for (let j = i + 1; j < units.length; j++) {
@@ -240,16 +249,15 @@ function separation(g) {
       b.x += nx * push; b.z += nz * push
     }
     // push out of buildings
-    each(g, (s) => {
-      if (s.kind !== 'building') return
+    for (const s of buildings) {
       const dx = a.x - s.x, dz = a.z - s.z
       const rr = s.proto.radius + a.proto.radius * 0.6
       const d2 = dx * dx + dz * dz
-      if (d2 > rr * rr || d2 < 1e-6) return
+      if (d2 > rr * rr || d2 < 1e-6) continue
       const d = Math.sqrt(d2)
       a.x = s.x + (dx / d) * rr
       a.z = s.z + (dz / d) * rr
-    })
+    }
   }
 }
 

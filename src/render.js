@@ -620,17 +620,28 @@ export class Renderer {
     const full = e.hp >= e.maxHp && !e.constructing
     sprite.visible = e.selected || !full
     if (!sprite.visible) return
+
+    // Redraw + re-upload the bar texture to the GPU only when its actual pixel
+    // content changed. A damaged-but-not-currently-being-hit unit keeps its bar
+    // visible indefinitely, and tex.needsUpdate=true is a real GPU upload — doing
+    // that for every visible bar every frame (common during any battle, with
+    // dozens of damaged units on screen) was a major, avoidable cost.
+    const width = e.constructing ? Math.round(94 * e.progress) : Math.round(94 * Math.max(0, e.hp / e.maxHp))
+    const sig = `${width}|${e.constructing ? 1 : 0}`
+    if (ud.barSig === sig) return
+    ud.barSig = sig
+
     const ctx = canvas.getContext('2d')
     ctx.clearRect(0, 0, 96, 14)
     ctx.fillStyle = 'rgba(0,0,0,0.7)'
     ctx.fillRect(0, 0, 96, 14)
     if (e.constructing) {
       ctx.fillStyle = '#e8b83a'
-      ctx.fillRect(1, 1, Math.round(94 * e.progress), 12)
+      ctx.fillRect(1, 1, width, 12)
     } else {
       const hpF = Math.max(0, e.hp / e.maxHp)
       ctx.fillStyle = hpF > 0.6 ? '#46d160' : hpF > 0.3 ? '#e8b83a' : '#e0452f'
-      ctx.fillRect(1, 1, Math.round(94 * hpF), 12)
+      ctx.fillRect(1, 1, width, 12)
     }
     tex.needsUpdate = true
   }
