@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Fur &amp; Fury: Tides of Clutter</title>
+  <title>Kingdoms of Wobbleton</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
-    html, body { height: 100%; overflow: hidden; background: #14181d; font-family: 'Segoe UI', system-ui, sans-serif; color: #e6ecf3; }
+    html, body { height: 100%; overflow: hidden; background: #1a2415; font-family: 'Segoe UI', system-ui, sans-serif; color: #f0ead8; }
     #game { position: fixed; inset: 0; display: block; z-index: 0; }
     button { font-family: inherit; }
 
@@ -14,77 +14,78 @@
     #topbar {
       position: fixed; top: 0; left: 0; right: 0; height: 46px;
       display: flex; align-items: center; gap: 26px; padding: 0 18px;
-      background: linear-gradient(to bottom, rgba(9,12,16,0.94), rgba(9,12,16,0.5));
+      background: linear-gradient(to bottom, rgba(24,20,12,0.92), rgba(24,20,12,0.45));
       font-size: 17px; z-index: 5; pointer-events: none;
     }
     #topbar .res { display: flex; gap: 7px; align-items: center; font-weight: 700; letter-spacing: 0.3px; }
-    #topbar .res .ico { font-size: 15px; opacity: 0.9; }
-    #topbar .res.blocked #res-sup { color: #ff6655; }
+    #topbar .res .ico { font-size: 16px; }
+    #topbar .res.blocked #res-sup { color: #ff7a66; }
     #topbar .spacer { flex: 1; }
+    #age-ind { color: #e8c88a; font-weight: 600; font-size: 15px; }
     #clock { opacity: 0.85; font-variant-numeric: tabular-nums; font-weight: 600; }
 
     /* ---- bottom HUD ---- */
     #hud {
       position: fixed; left: 0; right: 0; bottom: 0; height: 196px;
       display: flex; gap: 12px; padding: 12px;
-      background: linear-gradient(to top, rgba(9,12,16,0.96), rgba(9,12,16,0.78));
-      border-top: 1px solid #2c3542; z-index: 5;
+      background: linear-gradient(to top, rgba(26,21,12,0.96), rgba(26,21,12,0.8));
+      border-top: 2px solid #59492e; z-index: 5;
     }
     #sel-panel { display: flex; gap: 12px; width: 430px; min-width: 430px; }
-    #sel-panel .portrait { width: 170px; height: 170px; object-fit: cover; border-radius: 8px; border: 1px solid #3d4a5c; }
+    #sel-panel .portrait { width: 220px; height: 140px; object-fit: cover; border-radius: 8px; border: 1px solid #6a583a; align-self: center; }
     .sel-info { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
     .sel-name { font-weight: 700; font-size: 17px; }
-    .sel-stats { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13.5px; color: #aebfd4; }
-    .sel-stats .sh { color: #59c1ff; }
-    .sel-stats .role { color: #8b9cb3; font-style: italic; }
+    .sel-stats { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13.5px; color: #cdbfa0; }
+    .sel-stats .role { color: #a89a78; font-style: italic; }
     .sel-stats .warn { color: #ffd257; font-weight: 600; }
-    .sel-desc { font-size: 13px; color: #93a5bb; line-height: 1.4; }
-    .sel-extra { font-size: 13px; color: #b8c6d9; line-height: 1.4; border-top: 1px solid #2c3542; padding-top: 5px; }
-    .hint { color: #8b9cb3; font-size: 14.5px; align-self: center; line-height: 1.7; }
-    .hint b { color: #c8d4e2; }
+    .sel-desc { font-size: 13px; color: #b3a888; line-height: 1.4; }
+    .sel-extra { font-size: 13px; color: #d1c4a4; line-height: 1.4; border-top: 1px solid #4a3d26; padding-top: 5px; }
+    .hint { color: #b3a888; font-size: 14.5px; align-self: center; line-height: 1.7; }
+    .hint b { color: #e8dcc0; }
 
-    .pbar { width: 100%; max-width: 300px; height: 9px; background: #10151b; border: 1px solid #33404f; border-radius: 5px; overflow: hidden; }
+    .pbar { width: 100%; max-width: 300px; height: 9px; background: #17120a; border: 1px solid #5a4a2c; border-radius: 5px; overflow: hidden; }
     .pbar > div { height: 100%; background: linear-gradient(to right, #d8a52e, #f0c04a); transition: width 0.2s; }
 
     /* ---- action buttons ---- */
     #actions { flex: 1; display: flex; flex-wrap: wrap; gap: 10px; align-content: flex-start; overflow-y: auto; padding-right: 4px; }
     .action {
-      width: 158px; height: 170px; background: #1e2631; border: 1px solid #3a4757; border-radius: 8px;
-      color: #e6ecf3; cursor: pointer; display: flex; flex-direction: column; align-items: center; padding: 7px; gap: 5px;
+      width: 158px; height: 170px; background: #2a2415; border: 1px solid #5c4c2c; border-radius: 8px;
+      color: #f0ead8; cursor: pointer; display: flex; flex-direction: column; align-items: center; padding: 7px; gap: 5px;
       transition: border-color 0.1s, background 0.1s, transform 0.08s;
     }
-    .action:hover { border-color: #6fa7e8; background: #253141; transform: translateY(-2px); }
+    .action:hover { border-color: #d8b05c; background: #362e1a; transform: translateY(-2px); }
     .action:active { transform: translateY(0); }
     .action.disabled { opacity: 0.42; cursor: default; }
-    .action.disabled:hover { border-color: #3a4757; background: #1e2631; transform: none; }
-    .action img { width: 144px; height: 92px; object-fit: cover; border-radius: 5px; pointer-events: none; }
+    .action.disabled:hover { border-color: #5c4c2c; background: #2a2415; transform: none; }
+    .action.ageup { border-color: #b08c3c; background: #33290f; }
+    .action img { width: 144px; height: 92px; object-fit: cover; border-radius: 5px; pointer-events: none; background: #223018; }
     .action span { font-size: 14px; font-weight: 700; line-height: 1.15; text-align: center; }
-    .action small { font-size: 13px; color: #a3b4c9; display: flex; gap: 8px; }
-    .c-s { color: #7fd7e8; } .c-z { color: #f0a83a; } .c-p { color: #b8c6d9; }
+    .action small { font-size: 13px; color: #cdbfa0; display: flex; gap: 8px; }
+    .c-w { color: #cf9c5e; } .c-g { color: #f0c04a; } .c-p { color: #d1c4a4; }
 
-    .queue { width: 100%; font-size: 14px; color: #aebfd4; padding: 6px 2px; display: flex; flex-direction: column; gap: 5px; }
-    .queue-line b { color: #e6ecf3; }
-    .queue-line.dim { color: #7e8fa4; font-size: 13px; }
+    .queue { width: 100%; font-size: 14px; color: #cdbfa0; padding: 6px 2px; display: flex; flex-direction: column; gap: 5px; }
+    .queue-line b { color: #f0ead8; }
+    .queue-line.dim { color: #94886a; font-size: 13px; }
 
-    #minimap { width: 172px; height: 172px; min-width: 172px; border: 1px solid #3a4757; border-radius: 8px; cursor: pointer; }
+    #minimap { width: 172px; height: 172px; min-width: 172px; border: 2px solid #5c4c2c; border-radius: 8px; cursor: pointer; }
 
     /* ---- tooltip ---- */
     #tooltip {
       position: fixed; display: none; z-index: 20; max-width: 320px;
-      background: rgba(13,18,24,0.97); border: 1px solid #46586e; border-radius: 8px;
+      background: rgba(28,22,12,0.97); border: 1px solid #77613a; border-radius: 8px;
       padding: 10px 13px; font-size: 13.5px; line-height: 1.5; pointer-events: none;
       box-shadow: 0 6px 24px rgba(0,0,0,0.5);
     }
     #tooltip b { font-size: 14.5px; }
-    .tip-role { color: #8b9cb3; font-style: italic; margin-left: 4px; }
-    .tip-desc { color: #a3b4c9; }
+    .tip-role { color: #a89a78; font-style: italic; margin-left: 4px; }
+    .tip-desc { color: #cdbfa0; }
     .tip-lock { color: #ffd257; }
 
-    #dragbox { position: fixed; border: 1px solid #4dff88; background: rgba(77,255,136,0.12); display: none; z-index: 4; pointer-events: none; }
+    #dragbox { position: fixed; border: 1px solid #7fe86a; background: rgba(127,232,106,0.12); display: none; z-index: 4; pointer-events: none; }
 
     #toast {
       position: fixed; top: 58px; left: 50%; transform: translateX(-50%);
-      background: rgba(14,19,26,0.94); border: 1px solid #3a4757; padding: 10px 22px; border-radius: 8px;
+      background: rgba(28,22,12,0.94); border: 1px solid #5c4c2c; padding: 10px 22px; border-radius: 8px;
       font-size: 15px; opacity: 0; transition: opacity 0.25s; z-index: 6; pointer-events: none;
     }
     #toast.show { opacity: 1; }
@@ -93,40 +94,63 @@
 
     /* ---- overlays ---- */
     .overlay {
-      position: fixed; inset: 0; background: rgba(7,10,14,0.92); z-index: 10;
-      display: none; flex-direction: column; align-items: center; justify-content: center; gap: 28px;
+      position: fixed; inset: 0; z-index: 10;
+      display: none; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
+      background: radial-gradient(ellipse at 50% 30%, #3d5a2e 0%, #24361c 55%, #16220f 100%);
     }
-    #factionpick h1 { font-size: 38px; letter-spacing: 2px; text-shadow: 0 3px 14px rgba(0,0,0,0.6); }
-    #factionpick .sub { color: #93a5bb; margin-top: -20px; font-size: 16px; }
-    #factiongrid { display: flex; gap: 22px; }
-    .fcard {
-      width: 280px; background: #1b232d; border: 1px solid #3a4757; border-radius: 12px; padding: 16px;
-      color: #e6ecf3; cursor: pointer; text-align: left; transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s;
+    #home h1 {
+      font-size: 46px; letter-spacing: 3px; color: #f5e6bc;
+      text-shadow: 0 4px 0 #3a2c14, 0 8px 24px rgba(0,0,0,0.55);
     }
-    .fcard:hover { transform: translateY(-5px); border-color: #6fa7e8; box-shadow: 0 10px 30px rgba(0,0,0,0.45); }
-    .fcard img { width: 100%; height: 150px; object-fit: cover; border-radius: 8px; }
-    .fcard h3 { margin: 12px 0 7px; font-size: 19px; }
-    .fcard p { font-size: 13.5px; color: #93a5bb; line-height: 1.45; }
+    #home .sub { color: #c6d8ae; margin-top: -16px; font-size: 16.5px; }
+    .setup-card {
+      background: rgba(30,24,13,0.92); border: 2px solid #6a583a; border-radius: 14px;
+      padding: 26px 34px; display: flex; flex-direction: column; gap: 20px; min-width: 420px;
+      box-shadow: 0 14px 44px rgba(0,0,0,0.45);
+    }
+    .setup-row { display: flex; flex-direction: column; gap: 9px; }
+    .setup-row label { font-size: 14px; color: #cdbfa0; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+    .optrow { display: flex; gap: 10px; }
+    .opt {
+      flex: 1; padding: 11px 8px; background: #241d0f; color: #e8dcc0; border: 1px solid #5c4c2c;
+      border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.1s;
+    }
+    .opt:hover { border-color: #a8854a; }
+    .opt.sel { background: #4a3a1c; border-color: #d8b05c; color: #ffe9b0; }
+    #btn-start {
+      padding: 14px; background: linear-gradient(to bottom, #d8a52e, #b8862a); color: #241a06;
+      border: none; border-radius: 9px; font-size: 19px; font-weight: 800; letter-spacing: 1px; cursor: pointer;
+      box-shadow: 0 4px 0 #6a4c14;
+    }
+    #btn-start:hover { filter: brightness(1.08); }
+    #btn-start:active { transform: translateY(2px); box-shadow: 0 2px 0 #6a4c14; }
+    #home .credit { color: #8fa878; font-size: 12.5px; }
+
+    #loading { z-index: 11; }
+    #loading .load-label { font-size: 17px; color: #e8dcc0; }
+    #loadbar { width: 340px; height: 14px; background: #17120a; border: 1px solid #5c4c2c; border-radius: 7px; overflow: hidden; }
+    #loadbar-fill { height: 100%; width: 0%; background: linear-gradient(to right, #d8a52e, #f0c04a); transition: width 0.15s; }
 
     #endtitle { font-size: 58px; letter-spacing: 5px; }
-    #endtitle.win { color: #4dff88; text-shadow: 0 0 40px rgba(77,255,136,0.4); }
-    #endtitle.loss { color: #ff5544; text-shadow: 0 0 40px rgba(255,85,68,0.4); }
-    #endsub { color: #93a5bb; font-size: 17px; }
+    #endtitle.win { color: #a8e86a; text-shadow: 0 0 40px rgba(127,232,106,0.4); }
+    #endtitle.loss { color: #ff6a55; text-shadow: 0 0 40px rgba(255,85,68,0.4); }
+    #endsub { color: #c6d8ae; font-size: 17px; }
     #endscreen button {
-      background: #2a3542; color: #e6ecf3; border: 1px solid #4a5a6e; padding: 12px 30px;
+      background: #4a3a1c; color: #f0ead8; border: 1px solid #8a6f3e; padding: 12px 30px;
       border-radius: 8px; font-size: 17px; cursor: pointer;
     }
-    #endscreen button:hover { background: #35455a; }
+    #endscreen button:hover { background: #5c4a24; }
   </style>
 </head>
 <body>
   <canvas id="game"></canvas>
 
   <div id="topbar">
-    <div class="res"><span class="ico">◆</span><span id="res-s">0</span></div>
-    <div class="res"><span class="ico">🍊</span><span id="res-z">0</span></div>
+    <div class="res"><span class="ico">🪵</span><span id="res-w">0</span></div>
+    <div class="res"><span class="ico">🪙</span><span id="res-g">0</span></div>
     <div class="res"><span class="ico">👥</span><span id="res-sup">0/0</span></div>
     <div class="spacer"></div>
+    <div id="age-ind">Age I — Village Age</div>
     <div id="clock">0:00</div>
   </div>
 
@@ -140,10 +164,26 @@
   <div id="toast"></div>
   <div id="tooltip"></div>
 
-  <div id="factionpick" class="overlay">
-    <h1>FUR &amp; FURY: TIDES OF CLUTTER</h1>
-    <div class="sub">Choose your faction · destroy the enemy town hall</div>
-    <div id="factiongrid"></div>
+  <div id="home" class="overlay">
+    <h1>KINGDOMS OF WOBBLETON</h1>
+    <div class="sub">A cozy boxy real-time strategy · gather, build, age up, conquer</div>
+    <div class="setup-card">
+      <div class="setup-row">
+        <label>Rival kingdoms</label>
+        <div class="optrow" id="opt-ai"></div>
+      </div>
+      <div class="setup-row">
+        <label>Difficulty</label>
+        <div class="optrow" id="opt-diff"></div>
+      </div>
+      <button id="btn-start">⚔ &nbsp;Start the Match</button>
+    </div>
+    <div class="credit">Models by Quaternius (CC0) · Every match generates a new map</div>
+  </div>
+
+  <div id="loading" class="overlay">
+    <div class="load-label">Raising the kingdom…</div>
+    <div id="loadbar"><div id="loadbar-fill"></div></div>
   </div>
 
   <div id="endscreen" class="overlay">

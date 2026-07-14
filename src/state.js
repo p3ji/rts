@@ -1,67 +1,163 @@
-import { UNITS, BUILDINGS, SUPPLY_CAP, POWER_RADIUS, EXTRACTOR_OF, FACTIONS } from './data.js'
+import { UNITS, BUILDINGS, SUPPLY_CAP, PLAYER_COLORS, PLAYER_NAMES, DIFFICULTY } from './data.js'
 
-export const MAP = 170 // world is a MAP x MAP square centered on origin
+export const MAP = 220 // world is a MAP x MAP square centered on origin
 
 let nextId = 1
 
-export function createGame(playerFaction, aiFaction) {
+// Deterministic RNG so a seed reproduces the same map
+function mulberry32(seed) {
+  let a = seed >>> 0
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+export function createGame({ aiCount = 1, difficulty = 'normal', seed = null } = {}) {
+  nextId = 1
+  const rngSeed = seed ?? Math.floor(Math.random() * 2 ** 31)
+  const rnd = mulberry32(rngSeed)
+  const diff = DIFFICULTY[difficulty] || DIFFICULTY.normal
+
   const g = {
     time: 0,
     over: null, // 'win' | 'loss'
+    seed: rngSeed,
+    difficulty,
+    diff,
     entities: new Map(),
-    players: [
-      { faction: playerFaction, s: 50, z: 0, isAI: false },
-      { faction: aiFaction, s: 50, z: 0, isAI: true, ai: { t: 0, wave: 16, attacking: false } },
-    ],
-    events: [], // render/UI events: {type, ...}
+    players: [],
+    obstacles: [], // impassable: { x, z, r, model: 'mountain'|'rock', variant, rot, scale }
+    decor: [],     // visual only: { x, z, model, variant, rot, scale }
+    events: [],    // render/UI events: {type, ...}
   }
 
-  const d = MAP / 2 - 22
-  setupBase(g, 0, -d, d)   // player: south-west
-  setupBase(g, 1, d, -d)   // AI: north-east
-  // neutral expansion resources mid-map
-  spawnPatch(g, 0, 0, 5)
+  const nPlayers = 1 + Math.max(1, Math.min(3, aiCount))
+  for (let i = 0; i < nPlayers; i++) {
+    g.players.push({
+      name: PLAYER_NAMES[i], color: PLAYER_COLORS[i],
+      w: 200, g: 100, age: 1, ageUp: null, // ageUp: { t } while researching
+      isAI: i > 0, alive: true,
+      ai: i > 0 ? { t: rnd() * 2, nextWave: diff.waveFirst, waveSize: diff.waveStart, attacking: false } : null,
+    })
+  }
+
+  // corner spawns: player SW, AIs fill the rest
+  const d = MAP / 2 - 26
+  const corners = [[-d, d], [d, -d], [d, d], [-d, -d]]
+  const spawns = corners.slice(0, nPlayers)
+  g.spawns = spawns
+
+  generateMap(g, rnd, spawns)
+  for (let i = 0; i < nPlayers; i++) setupBase(g, i, spawns[i][0], spawns[i][1], rnd)
+
   return g
 }
 
-function setupBase(g, owner, x, z) {
-  const p = g.players[owner]
-  const thProto = FACTIONS[p.faction].townHall
-  const th = spawnBuilding(g, owner, thProto, x, z, true)
-  th.rally = { x: x + dirTo(x, z, 8), z: z + dirTo(z, x, 8) }
-  // mineral line: arc of shiny nodes behind the town hall
-  const away = Math.atan2(z, x) // outward from center
-  for (let i = 0; i < 6; i++) {
-    const a = away + (i - 2.5) * 0.22
-    const r = 11 + (i % 2) * 1.6
-    spawnResource(g, 'shiny', x + Math.cos(a) * r, z + Math.sin(a) * r, 1500)
+// ---- procedural map ---------------------------------------------------------
+
+function generateMap(g, rnd, spawns) {
+  const lim = MAP / 2 - 8
+  const nearSpawn = (x, z, r) => spawns.some(([sx, sz]) => Math.hypot(x - sx, z - sz) < r)
+  const nearObstacle = (x, z, pad) => g.obstacles.some((o) => Math.hypot(x - o.x, z - o.z) < o.r + pad)
+
+  // mountains — impassable terrain features
+  const nMountains = 5 + Math.floor(rnd() * 4)
+  for (let i = 0; i < nMountains && g.obstacles.length < nMountains; ) {
+    const x = (rnd() * 2 - 1) * lim
+    const z = (rnd() * 2 - 1) * lim
+    const variant = Math.floor(rnd() * 4)
+    const r = variant === 1 ? 9 + rnd() * 3 : variant >= 2 ? 8 + rnd() * 3 : 5.5 + rnd() * 2
+    if (nearSpawn(x, z, 42) || nearObstacle(x, z, r + 10)) { i += 0.25; continue }
+    g.obstacles.push({ x, z, r, model: 'mountain', variant, rot: rnd() * Math.PI * 2, scale: 1 })
+    i++
   }
-  spawnResource(g, 'geyser', x + Math.cos(away + 1.35) * 12, z + Math.sin(away + 1.35) * 12, 2500)
-  spawnResource(g, 'geyser', x + Math.cos(away - 1.35) * 12, z + Math.sin(away - 1.35) * 12, 2500)
-  // starting workers
-  const wProto = FACTIONS[p.faction].worker
+
+  // neutral forests — clusters of tree nodes across the map
+  const nForests = 9 + Math.floor(rnd() * 4)
+  for (let i = 0; i < nForests; i++) {
+    let x, z, tries = 0
+    do {
+      x = (rnd() * 2 - 1) * (lim - 6)
+      z = (rnd() * 2 - 1) * (lim - 6)
+      tries++
+    } while ((nearSpawn(x, z, 34) || nearObstacle(x, z, 10)) && tries < 24)
+    if (tries >= 24) continue
+    const pine = rnd() < 0.45
+    const n = 3 + Math.floor(rnd() * 3)
+    for (let k = 0; k < n; k++) {
+      const a = rnd() * Math.PI * 2, rr = k === 0 ? 0 : 4.5 + rnd() * 4
+      const tx = x + Math.cos(a) * rr, tz = z + Math.sin(a) * rr
+      if (Math.abs(tx) > lim || Math.abs(tz) > lim || nearObstacle(tx, tz, 4)) continue
+      spawnResource(g, 'wood', tx, tz, 350 + Math.floor(rnd() * 100), { pine, rot: rnd() * Math.PI * 2 })
+    }
+  }
+
+  // neutral gold in the midfield
+  const nGold = 3 + Math.floor(rnd() * 3)
+  for (let i = 0; i < nGold; i++) {
+    let x, z, tries = 0
+    do {
+      x = (rnd() * 2 - 1) * lim * 0.55
+      z = (rnd() * 2 - 1) * lim * 0.55
+      tries++
+    } while ((nearSpawn(x, z, 38) || nearObstacle(x, z, 8)) && tries < 24)
+    if (tries >= 24) continue
+    spawnResource(g, 'gold', x, z, 1100, { variant: Math.floor(rnd() * 3), rot: rnd() * Math.PI * 2 })
+    spawnResource(g, 'gold', x + 4 + rnd() * 2, z + (rnd() * 4 - 2), 1100, { variant: Math.floor(rnd() * 3), rot: rnd() * Math.PI * 2 })
+  }
+
+  // decorative rocks and props (non-blocking)
+  const nDecor = 46
+  for (let i = 0; i < nDecor; i++) {
+    const x = (rnd() * 2 - 1) * lim
+    const z = (rnd() * 2 - 1) * lim
+    if (nearSpawn(x, z, 22) || nearObstacle(x, z, 3)) continue
+    const roll = rnd()
+    const model = roll < 0.62 ? 'rock' : roll < 0.9 ? 'prop' : 'windmill'
+    g.decor.push({
+      x, z, model,
+      variant: Math.floor(rnd() * (model === 'rock' ? 3 : model === 'prop' ? 3 : 1)),
+      rot: rnd() * Math.PI * 2,
+      scale: model === 'windmill' ? 1 : 0.6 + rnd() * 0.7,
+    })
+  }
+}
+
+function setupBase(g, owner, x, z, rnd) {
+  const th = spawnBuilding(g, owner, 'towncenter', x, z, true)
+  const toward = Math.atan2(-z, -x) // toward map center
+  th.rally = { x: x + Math.cos(toward) * 9, z: z + Math.sin(toward) * 9 }
+
+  // starting forest behind the base
+  const back = Math.atan2(z, x)
   for (let i = 0; i < 4; i++) {
-    const u = spawnUnit(g, owner, wProto, x + Math.cos(away) * 6 + i * 1.6 - 2.4, z + Math.sin(away) * 6)
+    const a = back + (i - 1.5) * 0.38
+    const r = 13 + (i % 2) * 3
+    spawnResource(g, 'wood', x + Math.cos(a) * r, z + Math.sin(a) * r, 420, { pine: i % 2 === 0, rot: rnd() * Math.PI * 2 })
+  }
+  // two gold piles flanking
+  for (const s of [-1, 1]) {
+    const a = back + s * 1.15
+    spawnResource(g, 'gold', x + Math.cos(a) * 12, z + Math.sin(a) * 12, 1000, { variant: Math.floor(rnd() * 3), rot: rnd() * Math.PI * 2 })
+  }
+  // starting villagers
+  for (let i = 0; i < 4; i++) {
+    const u = spawnUnit(g, owner, 'villager', x + Math.cos(toward) * 7 + (i - 1.5) * 1.6, z + Math.sin(toward) * 7)
     autoGather(g, u)
   }
 }
 
-function dirTo(a, b, m) { return (a === 0 ? 1 : -Math.sign(a)) * m }
-
-function spawnPatch(g, x, z, n) {
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2
-    spawnResource(g, 'shiny', x + Math.cos(a) * 6, z + Math.sin(a) * 6, 1200)
-  }
-}
+// ---- spawning ---------------------------------------------------------------
 
 export function spawnUnit(g, owner, protoId, x, z) {
   const p = UNITS[protoId]
   const e = {
     id: nextId++, kind: 'unit', protoId, proto: p, owner,
     x, z, rot: 0,
-    hp: p.hp, maxHp: p.hp,
-    shield: p.shield || 0, maxShield: p.shield || 0, lastHit: -99,
+    hp: p.hp, maxHp: p.hp, lastHit: -99,
     order: { type: 'idle' },
     atkT: 0, gatherT: 0, carry: null,
     buffSpeed: 1, buffAtk: 1, slowUntil: 0,
@@ -72,16 +168,16 @@ export function spawnUnit(g, owner, protoId, x, z) {
   return e
 }
 
-export function spawnBuilding(g, owner, protoId, x, z, complete = false, geyserId = null) {
+export function spawnBuilding(g, owner, protoId, x, z, complete = false) {
   const p = BUILDINGS[protoId]
   const e = {
     id: nextId++, kind: 'building', protoId, proto: p, owner,
     x, z, rot: 0,
     hp: complete ? p.hp : Math.max(10, p.hp * 0.05), maxHp: p.hp,
-    shield: complete ? (p.shield || 0) : 0, maxShield: p.shield || 0, lastHit: -99,
+    lastHit: -99,
     constructing: !complete, progress: complete ? 1 : 0.05,
-    queue: [], rally: null, atkT: 0,
-    powered: true, geyserId,
+    queue: [], rally: null, atkT: 0, research: null, // research: { t } for Age Up
+    age: g.players[owner].age, // visual age at construction time
     dead: false,
   }
   g.entities.set(e.id, e)
@@ -89,12 +185,14 @@ export function spawnBuilding(g, owner, protoId, x, z, complete = false, geyserI
   return e
 }
 
-export function spawnResource(g, rtype, x, z, amount) {
+export function spawnResource(g, rtype, x, z, amount, extra = {}) {
   const e = {
     id: nextId++, kind: 'resource', rtype, x, z,
-    amount, radius: rtype === 'geyser' ? 1.8 : 1.1,
-    extractorId: null, dead: false,
-    proto: { name: rtype === 'geyser' ? 'Citrus Geyser' : 'Shiny Crystals', radius: rtype === 'geyser' ? 1.8 : 1.1 },
+    amount, maxAmount: amount,
+    radius: rtype === 'wood' ? 2.3 : 1.7,
+    pine: !!extra.pine, variant: extra.variant ?? 0, rot: extra.rot ?? 0,
+    dead: false, depletedVisual: false,
+    proto: { name: rtype === 'wood' ? 'Forest' : 'Gold Deposit', radius: rtype === 'wood' ? 2.3 : 1.7 },
   }
   g.entities.set(e.id, e)
   g.events.push({ type: 'spawn', id: e.id })
@@ -128,43 +226,40 @@ export function supplyOf(g, owner) {
   return { used, max: Math.min(max, SUPPLY_CAP) }
 }
 
-export function hasTech(g, owner) {
+export function ageOf(g, owner) { return g.players[owner].age }
+
+export function hasTemple(g, owner) {
   let t = false
   each(g, (e) => { if (e.owner === owner && e.kind === 'building' && e.proto.kind === 'tech' && !e.constructing) t = true })
   return t
 }
 
-export function isPowered(g, e) {
-  if (e.kind !== 'building' || !e.proto.needsPower) return true
-  let ok = false
-  each(g, (p) => {
-    if (!ok && p.kind === 'building' && p.owner === e.owner && p.proto.power && !p.constructing && dist(p, e) <= POWER_RADIUS) ok = true
-  })
-  return ok
-}
-
 export function canAfford(g, owner, cost) {
   const p = g.players[owner]
-  return p.s >= (cost.s || 0) && p.z >= (cost.z || 0)
+  return p.w >= (cost.w || 0) && p.g >= (cost.g || 0)
 }
 
 export function pay(g, owner, cost) {
   const p = g.players[owner]
-  p.s -= cost.s || 0
-  p.z -= cost.z || 0
+  p.w -= cost.w || 0
+  p.g -= cost.g || 0
 }
 
 export function refund(g, owner, cost) {
   const p = g.players[owner]
-  p.s += cost.s || 0
-  p.z += cost.z || 0
+  p.w += cost.w || 0
+  p.g += cost.g || 0
 }
 
 export function autoGather(g, u) {
-  const node = findNearest(g, u, (e) => e.kind === 'resource' && e.rtype === 'shiny' && e.amount > 0, 60)
+  const node = findNearest(g, u, (e) => e.kind === 'resource' && e.amount > 0, 65)
   if (node) u.order = { type: 'gather', nodeId: node.id }
 }
 
-export function extractorProtoFor(g, owner) {
-  return EXTRACTOR_OF[g.players[owner].faction]
+// Obstacle test for placement + movement
+export function blockedByObstacle(g, x, z, pad = 0) {
+  for (const o of g.obstacles) {
+    if (Math.hypot(x - o.x, z - o.z) < o.r + pad) return o
+  }
+  return null
 }

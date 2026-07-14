@@ -1,20 +1,30 @@
 import { createGame } from './state.js'
 import { tick } from './sim.js'
-import { Renderer } from './render.js'
+import { Renderer, loadAssets, generatePortraits } from './render.js'
 import { Input } from './input.js'
-import { UI, factionPickScreen } from './ui.js'
-import { FACTIONS } from './data.js'
+import { UI, homeScreen, showLoading } from './ui.js'
+import { DIFFICULTY } from './data.js'
 
 const FIXED_DT = 1 / 30
 
-factionPickScreen((factionId) => {
-  const others = Object.keys(FACTIONS).filter((f) => f !== factionId)
-  const aiFaction = others[Math.floor(Math.random() * others.length)]
-  start(factionId, aiFaction)
+let assetsReady = false
+
+homeScreen(async (opts) => {
+  showLoading(true, 0)
+  if (!assetsReady) {
+    await loadAssets((f) => showLoading(true, f * 0.9))
+    generatePortraits()
+    assetsReady = true
+  }
+  showLoading(true, 1)
+  requestAnimationFrame(() => {
+    showLoading(false)
+    start(opts)
+  })
 })
 
-function start(playerFaction, aiFaction) {
-  const game = createGame(playerFaction, aiFaction)
+function start(opts) {
+  const game = createGame(opts)
   const canvas = document.getElementById('game')
   const renderer = new Renderer(canvas, game)
   let input
@@ -27,7 +37,7 @@ function start(playerFaction, aiFaction) {
   window.__frame = () => { input.update(FIXED_DT); renderer.sync(); ui.update(input.selected); renderer.render(); return 'frame ok' }
   window.__dbg = { input, ui, renderer }
   ui.refresh([])
-  ui.toast(`You are the ${FACTIONS[playerFaction].name}. Enemy: ${FACTIONS[aiFaction].name}.`)
+  ui.toast(`${opts.aiCount} rival kingdom${opts.aiCount > 1 ? 's' : ''} · ${DIFFICULTY[opts.difficulty].name} · destroy every enemy Town Center`)
 
   let ended = false
 

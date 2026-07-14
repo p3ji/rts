@@ -1,5 +1,5 @@
 import { BUILDINGS } from './data.js'
-import { each, dist } from './state.js'
+import { each, dist, MAP } from './state.js'
 import { cmdMove, cmdAttack, cmdGather, cmdRepair, tryPlaceBuilding, checkPlacement } from './sim.js'
 
 export class Input {
@@ -175,11 +175,7 @@ export class Input {
         return
       }
       if (target.owner === 0) {
-        // friendly: extractor => gather; damaged mech + repair-capable => repair
-        if (target.kind === 'building' && target.proto.kind === 'extractor' && !target.constructing) {
-          const workers = units.filter((u) => u.proto.worker)
-          if (workers.length) { cmdGather(this.game, workers, target); this.ui.toast('Gathering Zest'); return }
-        }
+        // friendly: resume construction or repair
         if (target.kind === 'building' && target.constructing) {
           const workers = units.filter((u) => u.proto.worker)
           if (workers.length) { workers.forEach((w) => { w.order = { type: 'build', siteId: target.id } }); this.ui.toast('Resuming construction'); return }
@@ -213,7 +209,7 @@ export class Input {
   }
 
   clampCam() {
-    const L = 88
+    const L = MAP / 2 - 16
     this.r.camTarget.x = Math.max(-L, Math.min(L, this.r.camTarget.x))
     this.r.camTarget.z = Math.max(-L, Math.min(L, this.r.camTarget.z))
   }

@@ -1,3 +1,6 @@
 node_modules/
 dist/
 *.local
+
+# raw source asset pack (only public/models glTFs are used at runtime)
+exampleassets/assets/
