@@ -1,5 +1,5 @@
 import { createGame } from './state.js'
-import { tick } from './sim.js'
+import { tick, checksum } from './sim.js'
 import { Renderer, loadAssets, generatePortraits } from './render.js'
 import { Input } from './input.js'
 import { UI, homeScreen, showLoading } from './ui.js'
@@ -37,6 +37,7 @@ function start(opts) {
   window.__game = game
   window.__ff = (seconds) => { for (let i = 0; i < seconds * 30; i++) tick(game, FIXED_DT) }
   window.__frame = () => { input.update(FIXED_DT); renderer.sync(); ui.update(input.selected); renderer.render(); return 'frame ok' }
+  window.__checksum = () => checksum(game)
   window.__dbg = { input, ui, renderer }
   ui.refresh([])
   ui.toast(`${opts.aiCount} rival kingdom${opts.aiCount > 1 ? 's' : ''} · ${DIFFICULTY[opts.difficulty].name} · destroy every enemy Town Center`)

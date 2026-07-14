@@ -7,12 +7,9 @@ export const MAP = 220 // world is a MAP x MAP square centered on origin
 // `seen` = ever explored (stays revealed as dimmed "shroud").
 export const FOG_CELL = 4
 export const FOG_N = Math.ceil(MAP / FOG_CELL)
-export const HUMAN = 0 // fog is tracked from the human player's perspective
-
-let nextId = 1
 
 // Deterministic RNG so a seed reproduces the same map
-function mulberry32(seed) {
+export function mulberry32(seed) {
   let a = seed >>> 0
   return function () {
     a |= 0; a = (a + 0x6d2b79f5) | 0
@@ -23,15 +20,23 @@ function mulberry32(seed) {
 }
 
 export function createGame({ aiCount = 1, difficulty = 'normal', seed = null } = {}) {
-  nextId = 1
   const rngSeed = seed ?? Math.floor(Math.random() * 2 ** 31)
   const rnd = mulberry32(rngSeed)
   const diff = DIFFICULTY[difficulty] || DIFFICULTY.normal
 
   const g = {
     time: 0,
+    tick: 0, // integer simulation step counter (drives lockstep + command timing)
+    nextId: 1, // per-game entity id counter (kept in state so ids are deterministic)
     over: null, // 'win' | 'loss'
     seed: rngSeed,
+    // Simulation RNG — a separate, reproducible stream from map generation so the
+    // number of map-gen calls can change without shifting in-game randomness.
+    // Both networked clients derive the identical stream from the shared seed.
+    rng: mulberry32((rngSeed ^ 0x9e3779b9) >>> 0),
+    localPlayer: 0, // which player this client controls (host = 0, joiner = 1 online)
+    inputDelay: 1, // ticks between issuing a command and it executing (raised for netplay)
+    commandsByTick: new Map(), // execTick -> [command,...]
     difficulty,
     diff,
     entities: new Map(),
@@ -84,14 +89,14 @@ export function sightRadius(e) {
   return e.proto?.range ? Math.max(18, e.proto.range + 8) : 18
 }
 
-// Recompute the human player's visibility grid from their units & buildings.
+// Recompute the local player's visibility grid from their units & buildings.
 export function updateVision(g) {
   const f = g.fog
   if (!f) return
   f.vis.fill(0)
   const n = f.n, half = MAP / 2
   for (const e of g.entities.values()) {
-    if (e.dead || e.owner !== HUMAN) continue
+    if (e.dead || e.owner !== g.localPlayer) continue
     if (e.kind !== 'unit' && e.kind !== 'building') continue
     const r = sightRadius(e)
     const cx = (e.x + half) / FOG_CELL, cz = (e.z + half) / FOG_CELL, cr = r / FOG_CELL
@@ -228,7 +233,7 @@ function setupBase(g, owner, x, z, rnd) {
 export function spawnUnit(g, owner, protoId, x, z) {
   const p = UNITS[protoId]
   const e = {
-    id: nextId++, kind: 'unit', protoId, proto: p, owner,
+    id: g.nextId++, kind: 'unit', protoId, proto: p, owner,
     x, z, rot: 0,
     hp: p.hp, maxHp: p.hp, lastHit: -99,
     order: { type: 'idle' },
@@ -244,7 +249,7 @@ export function spawnUnit(g, owner, protoId, x, z) {
 export function spawnBuilding(g, owner, protoId, x, z, complete = false) {
   const p = BUILDINGS[protoId]
   const e = {
-    id: nextId++, kind: 'building', protoId, proto: p, owner,
+    id: g.nextId++, kind: 'building', protoId, proto: p, owner,
     x, z, rot: 0,
     hp: complete ? p.hp : Math.max(10, p.hp * 0.05), maxHp: p.hp,
     lastHit: -99,
@@ -260,7 +265,7 @@ export function spawnBuilding(g, owner, protoId, x, z, complete = false) {
 
 export function spawnResource(g, rtype, x, z, amount, extra = {}) {
   const e = {
-    id: nextId++, kind: 'resource', rtype, x, z,
+    id: g.nextId++, kind: 'resource', rtype, x, z,
     amount, maxAmount: amount,
     radius: rtype === 'wood' ? 2.3 : 1.7,
     pine: !!extra.pine, variant: extra.variant ?? 0, rot: extra.rot ?? 0,

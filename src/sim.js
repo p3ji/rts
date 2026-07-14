@@ -13,6 +13,11 @@ const DROP_RANGE = 1.5
 export function tick(g, dt) {
   if (g.over) return
   g.time += dt
+  g.tick++
+
+  // apply any player commands scheduled for this exact tick (see issue/applyCommand)
+  const batch = g.commandsByTick.get(g.tick)
+  if (batch) { for (const c of batch) applyCommand(g, c); g.commandsByTick.delete(g.tick) }
 
   for (let i = 1; i < g.players.length; i++) aiThink(g, i, dt)
 
@@ -375,6 +380,94 @@ function winCheck(g) {
   else if (g.players.slice(1).every((p) => !p.alive)) g.over = 'win'
 }
 
+// ---- command layer (deterministic, network-ready) ---------------------------
+// Player actions are enqueued as serializable commands scheduled for a future
+// tick, then applied identically on every client. The AI runs inside the tick
+// and calls the cmd* helpers directly — it is already deterministic via g.rng.
+
+// Schedule a command; returns the tick it will execute on.
+export function issue(g, cmd) {
+  const et = g.tick + g.inputDelay
+  let arr = g.commandsByTick.get(et)
+  if (!arr) { arr = []; g.commandsByTick.set(et, arr) }
+  arr.push(cmd)
+  return et
+}
+
+function resolveUnits(g, ids) {
+  const out = []
+  for (const id of ids) { const e = g.entities.get(id); if (e && !e.dead && e.kind === 'unit') out.push(e) }
+  return out
+}
+
+// Apply one command to the simulation. Every field is a primitive or id so a
+// command survives JSON round-tripping across the network unchanged.
+export function applyCommand(g, c) {
+  switch (c.t) {
+    case 'move': { const u = resolveUnits(g, c.units); if (u.length) cmdMove(g, u, c.x, c.z, c.am); break }
+    case 'attack': {
+      const u = resolveUnits(g, c.units); const tgt = g.entities.get(c.target)
+      if (u.length && tgt && !tgt.dead) cmdAttack(g, u, tgt); break
+    }
+    case 'gather': {
+      const u = resolveUnits(g, c.units); const n = g.entities.get(c.node)
+      if (u.length && n && !n.dead) cmdGather(g, u, n); break
+    }
+    case 'repair': {
+      const u = resolveUnits(g, c.units); const tgt = g.entities.get(c.target)
+      if (u.length && tgt && !tgt.dead) cmdRepair(g, u, tgt); break
+    }
+    case 'construct': {
+      const u = resolveUnits(g, c.units).filter((e) => e.proto.worker); const s = g.entities.get(c.site)
+      if (u.length && s && !s.dead && s.constructing) u.forEach((w) => { w.order = { type: 'build', siteId: s.id } })
+      break
+    }
+    case 'rally': { const b = g.entities.get(c.b); if (b && !b.dead) b.rally = { x: c.x, z: c.z }; break }
+    case 'build': {
+      const b = g.entities.get(c.builder)
+      const r = tryPlaceBuilding(g, c.p, c.proto, c.x, c.z, b && !b.dead ? b : null)
+      if (!r.ok && c.p === g.localPlayer) g.events.push({ type: 'cmdfail', owner: c.p, reason: r.reason })
+      break
+    }
+    case 'queue': {
+      const b = g.entities.get(c.b)
+      if (b && !b.dead && b.owner === c.p) {
+        const r = tryQueueUnit(g, b, c.proto)
+        if (!r.ok && c.p === g.localPlayer) g.events.push({ type: 'cmdfail', owner: c.p, reason: r.reason })
+      }
+      break
+    }
+    case 'ageup': {
+      const tc = g.entities.get(c.tc)
+      if (tc && !tc.dead && tc.owner === c.p) {
+        const r = tryAgeUp(g, tc)
+        if (!r.ok && c.p === g.localPlayer) g.events.push({ type: 'cmdfail', owner: c.p, reason: r.reason })
+      }
+      break
+    }
+  }
+}
+
+// Order-independent-per-tick hash of the whole simulation for desync detection.
+export function checksum(g) {
+  let h = 0x811c9dc5 >>> 0
+  const mix = (n) => { h ^= n >>> 0; h = Math.imul(h, 0x01000193) >>> 0 }
+  mix(g.tick)
+  for (const e of g.entities.values()) {
+    if (e.dead) continue
+    mix(e.id)
+    mix((e.x * 16) | 0)
+    mix((e.z * 16) | 0)
+    mix((e.hp * 4) | 0)
+    if (e.kind === 'unit') mix(ORDER_CODE[e.order?.type] || 0)
+    if (e.kind === 'resource') mix(e.amount | 0)
+  }
+  for (const p of g.players) { mix(p.w | 0); mix(p.g | 0); mix(p.age); mix(p.alive ? 1 : 0) }
+  return h >>> 0
+}
+
+const ORDER_CODE = { idle: 1, move: 2, attackmove: 3, attack: 4, gather: 5, return: 6, build: 7, repair: 8 }
+
 // ---- commands (player + AI use the same API) --------------------------------
 
 export function cmdMove(g, units, x, z, attackMove = false) {
@@ -514,15 +607,15 @@ function aiThink(g, owner, dt) {
   // army production
   if (army.length < diff.armyCap) {
     if (barracks && barracks.queue.length < 2) {
-      const pick = p.age >= 2 && Math.random() > 0.5 ? 'knight' : 'swordsman'
+      const pick = p.age >= 2 && g.rng() > 0.5 ? 'knight' : 'swordsman'
       tryQueueUnit(g, barracks, pick)
     }
     if (archery && archery.queue.length < 2) {
-      const roll = Math.random()
+      const roll = g.rng()
       const pick = p.age >= 2 && roll > 0.75 ? 'catapult' : 'archer'
       tryQueueUnit(g, archery, pick)
     }
-    if (p.age >= 2 && temple && !temple.constructing && temple.queue.length === 0 && Math.random() > 0.7) {
+    if (p.age >= 2 && temple && !temple.constructing && temple.queue.length === 0 && g.rng() > 0.7) {
       tryQueueUnit(g, temple, 'priest')
     }
   }
@@ -533,7 +626,7 @@ function aiThink(g, owner, dt) {
     const target = aiPickTarget(g, owner, th)
     if (target) {
       cmdMove(g, army, target.x, target.z, true)
-      if (target.owner === 0) g.events.push({ type: 'wave', size: army.length, owner })
+      if (target.owner >= 0) g.events.push({ type: 'wave', size: army.length, owner, target: target.owner })
     }
   }
   if (ai.attacking) {
@@ -563,8 +656,8 @@ function aiBuild(g, owner, protoId, th, workers) {
   const w = workers.find((x) => x.order.type === 'gather' || x.order.type === 'idle')
   if (!w) return
   for (let attempt = 0; attempt < 10; attempt++) {
-    const a = Math.random() * Math.PI * 2
-    const r = 8 + Math.random() * 11
+    const a = g.rng() * Math.PI * 2
+    const r = 8 + g.rng() * 11
     const x = th.x + Math.cos(a) * r, z = th.z + Math.sin(a) * r
     const res = tryPlaceBuilding(g, owner, protoId, x, z, w)
     if (res.ok) return

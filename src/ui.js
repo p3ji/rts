@@ -1,12 +1,14 @@
 import { UNITS, BUILDINGS, BUILD_MENU, DIFFICULTY, PLAYER_COLORS, AGE_UP_COST } from './data.js'
-import { each, supplyOf, ageOf, hasTemple, isVisible, isExplored, MAP } from './state.js'
-import { tryQueueUnit, tryAgeUp } from './sim.js'
+import { each, supplyOf, ageOf, hasTemple, canAfford, isVisible, isExplored, MAP } from './state.js'
+import { issue } from './sim.js'
 import { PORTRAITS } from './render.js'
 
 const $ = (id) => document.getElementById(id)
 const hex = (c) => '#' + c.toString(16).padStart(6, '0')
 
 export class UI {
+  get me() { return this.game.localPlayer }
+
   constructor(game, renderer, getInput) {
     this.game = game
     this.r = renderer
@@ -33,8 +35,8 @@ export class UI {
   }
 
   updateTop() {
-    const p = this.game.players[0]
-    const sup = supplyOf(this.game, 0)
+    const p = this.game.players[this.me]
+    const sup = supplyOf(this.game, this.me)
     $('res-w').textContent = Math.floor(p.w)
     $('res-g').textContent = Math.floor(p.g)
     $('res-sup').textContent = `${sup.used}/${sup.max}`
@@ -71,11 +73,11 @@ export class UI {
   signature(selected) {
     if (!selected.length) return 'empty'
     const f = selected[0]
-    const p = this.game.players[0]
+    const p = this.game.players[this.me]
     const parts = [selected.map((e) => e.id).join(','), f.constructing ? Math.round(f.progress * 20) : 'x',
       Math.ceil(f.hp / 4), p.age, f.research ? Math.round(f.research.t) : '']
     if (f.queue) parts.push(f.queue.map((q) => q.protoId).join('|'), f.queue[0]?.started ? Math.round(f.queue[0].t) : '')
-    parts.push(hasTemple(this.game, 0) ? 'T' : 't')
+    parts.push(hasTemple(this.game, this.me) ? 'T' : 't')
     return parts.join('#')
   }
 
@@ -139,7 +141,7 @@ export class UI {
       </div>`
 
     // ---- action buttons ----
-    const playerAge = ageOf(this.game, 0)
+    const playerAge = ageOf(this.game, this.me)
 
     if (first.kind === 'building' && first.proto.trains) {
       const constructing = first.constructing
@@ -153,9 +155,8 @@ export class UI {
           <span class="tip-desc">${u.desc}</span>${lockMsg ? `<br><span class="tip-lock">🔒 ${lockMsg}</span>` : ''}`)
         if (!locked) {
           b.onclick = () => {
-            const r = tryQueueUnit(this.game, first, uid)
-            if (!r.ok) this.toast(r.reason, true)
-            this.refresh(selected)
+            if (!canAfford(this.game, this.me, u.cost)) { this.toast('Not enough resources', true); return }
+            issue(this.game, { t: 'queue', p: this.me, b: first.id, proto: uid })
           }
         }
         actions.appendChild(b)
@@ -163,7 +164,7 @@ export class UI {
 
       // Age Up on the Town Center
       if (first.proto.kind === 'townhall' && playerAge < 2 && !constructing) {
-        const temple = hasTemple(this.game, 0)
+        const temple = hasTemple(this.game, this.me)
         const busy = !!first.research
         const locked = !temple || busy
         const b = this.actionBtn(PORTRAITS.temple, 'Advance to Age II', this.costStr(AGE_UP_COST), locked)
@@ -173,10 +174,9 @@ export class UI {
           ${!temple ? '<br><span class="tip-lock">🔒 Requires a Temple</span>' : ''}`)
         if (!locked) {
           b.onclick = () => {
-            const r = tryAgeUp(this.game, first)
-            if (!r.ok) this.toast(r.reason, true)
-            else this.toast('Advancing to Age II…')
-            this.refresh(selected)
+            if (!canAfford(this.game, this.me, AGE_UP_COST)) { this.toast('Not enough resources', true); return }
+            issue(this.game, { t: 'ageup', p: this.me, tc: first.id })
+            this.toast('Advancing to Age II…')
           }
         }
         actions.appendChild(b)
@@ -242,9 +242,8 @@ export class UI {
     const g = this.game
     each(g, (e) => {
       // hide fogged entities: enemy units need live sight, everything else once explored
-      if (e.owner !== 0) {
-        if (e.kind === 'unit') { if (!isVisible(g, e.x, e.z)) return }
-        else if (!isExplored(g, e.x, e.z)) return
+      if (e.owner !== this.me) {
+        if (e.kind === 'unit' ? !isVisible(g, e.x, e.z) : !isExplored(g, e.x, e.z)) return
       }
       const x = (e.x + MAP / 2) * k, y = (e.z + MAP / 2) * k
       if (e.kind === 'resource') {
@@ -269,17 +268,18 @@ export class UI {
 
   drainEvents() {
     for (const ev of this.game.events) {
-      if (ev.type === 'wave') this.toast(`⚠ ${this.game.players[ev.owner].name} is attacking! (${ev.size} units)`, true)
+      if (ev.type === 'wave' && ev.target === this.me) this.toast(`⚠ ${this.game.players[ev.owner].name} is attacking! (${ev.size} units)`, true)
       if (ev.type === 'ageup') {
-        this.toast(ev.owner === 0 ? '🏰 You have advanced to Age II!' : `${this.game.players[ev.owner].name} has advanced to Age II`, ev.owner !== 0)
+        this.toast(ev.owner === this.me ? '🏰 You have advanced to Age II!' : `${this.game.players[ev.owner].name} has advanced to Age II`, ev.owner !== this.me)
       }
       if (ev.type === 'eliminated') {
-        if (ev.owner !== 0) this.toast(`☠ ${this.game.players[ev.owner].name} has been eliminated!`)
+        if (ev.owner !== this.me) this.toast(`☠ ${this.game.players[ev.owner].name} has been eliminated!`)
       }
-      if (ev.type === 'complete' && ev.owner === 0) {
+      if (ev.type === 'complete' && ev.owner === this.me) {
         const e = this.game.entities.get(ev.id)
         if (e) this.toast(`${e.proto.name} complete`)
       }
+      if (ev.type === 'cmdfail' && ev.owner === this.me) this.toast(ev.reason, true)
     }
     this.game.events.length = 0
   }

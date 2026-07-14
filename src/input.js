@@ -1,6 +1,8 @@
 import { BUILDINGS } from './data.js'
-import { each, dist, MAP } from './state.js'
-import { cmdMove, cmdAttack, cmdGather, cmdRepair, tryPlaceBuilding, checkPlacement } from './sim.js'
+import { each, canAfford, MAP } from './state.js'
+import { issue, checkPlacement } from './sim.js'
+
+const ids = (list) => list.map((u) => u.id)
 
 export class Input {
   constructor(game, renderer, ui) {
@@ -48,7 +50,7 @@ export class Input {
     if (k === ' ') {
       // jump camera to base
       let th = null
-      each(this.game, (x) => { if (!th && x.owner === 0 && x.kind === 'building' && x.proto.kind === 'townhall') th = x })
+      each(this.game, (x) => { if (!th && x.owner === this.game.localPlayer && x.kind === 'building' && x.proto.kind === 'townhall') th = x })
       if (th) { this.r.camTarget.set(th.x, 0, th.z); this.r.updateCamera() }
       e.preventDefault()
     }
@@ -121,7 +123,7 @@ export class Input {
       if (this.attackModifier) {
         const pt = this.r.screenToGround(n.x, n.y)
         const units = this.selected.filter((u) => u.kind === 'unit' && !u.dead)
-        if (units.length) cmdMove(this.game, units, pt.x, pt.z, true)
+        if (units.length) issue(this.game, { t: 'move', p: this.game.localPlayer, units: ids(units), x: pt.x, z: pt.z, am: true })
         this.attackModifier = false
         return
       }
@@ -167,7 +169,7 @@ export class Input {
   clickSelect(n, additive) {
     const ent = this.r.pickEntity(n.x, n.y)
     if (!additive) this.clearSelection()
-    if (ent && ent.kind !== 'resource' && ent.owner === 0) {
+    if (ent && ent.kind !== 'resource' && ent.owner === this.game.localPlayer) {
       ent.selected = true
       if (!this.selected.includes(ent)) this.selected.push(ent)
     }
@@ -180,7 +182,7 @@ export class Input {
     const y0 = Math.min(d.y0, d.y1), y1 = Math.max(d.y0, d.y1)
     const picked = []
     each(this.game, (ent) => {
-      if (ent.owner !== 0 || ent.kind !== 'unit') return
+      if (ent.owner !== this.game.localPlayer || ent.kind !== 'unit') return
       const s = this.r.worldToScreen(ent.x, 1, ent.z)
       if (s.x >= x0 && s.x <= x1 && s.y >= y0 && s.y <= y1) picked.push(ent)
     })
@@ -200,13 +202,15 @@ export class Input {
   }
 
   rightCommand(n) {
+    const g = this.game
+    const me = g.localPlayer
     const units = this.selected.filter((u) => u.kind === 'unit' && !u.dead)
     const buildings = this.selected.filter((u) => u.kind === 'building' && !u.dead)
     const target = this.r.pickEntity(n.x, n.y)
     const pt = this.r.screenToGround(n.x, n.y)
 
     if (buildings.length && !units.length) {
-      for (const b of buildings) b.rally = { x: pt.x, z: pt.z }
+      for (const b of buildings) issue(g, { t: 'rally', p: me, b: b.id, x: pt.x, z: pt.z })
       this.ui.toast('Rally point set')
       return
     }
@@ -215,43 +219,45 @@ export class Input {
     if (target && !target.dead) {
       if (target.kind === 'resource') {
         const workers = units.filter((u) => u.proto.worker)
-        if (workers.length) { cmdGather(this.game, workers, target); this.ui.toast('Gathering') }
+        if (workers.length) { issue(g, { t: 'gather', p: me, units: ids(workers), node: target.id }); this.ui.toast('Gathering') }
         const rest = units.filter((u) => !u.proto.worker)
-        if (rest.length) cmdMove(this.game, rest, target.x, target.z)
+        if (rest.length) issue(g, { t: 'move', p: me, units: ids(rest), x: target.x, z: target.z, am: false })
         return
       }
-      if (target.owner === 0) {
+      if (target.owner === me) {
         // friendly: resume construction or repair
         if (target.kind === 'building' && target.constructing) {
           const workers = units.filter((u) => u.proto.worker)
-          if (workers.length) { workers.forEach((w) => { w.order = { type: 'build', siteId: target.id } }); this.ui.toast('Resuming construction'); return }
+          if (workers.length) { issue(g, { t: 'construct', p: me, units: ids(workers), site: target.id }); this.ui.toast('Resuming construction'); return }
         }
         if (target.hp < target.maxHp) {
           const fixers = units.filter((u) => u.proto.repairs)
-          if (fixers.length) { cmdRepair(this.game, fixers, target); this.ui.toast('Repairing'); return }
+          if (fixers.length) { issue(g, { t: 'repair', p: me, units: ids(fixers), target: target.id }); this.ui.toast('Repairing'); return }
         }
-        cmdMove(this.game, units, target.x, target.z)
+        issue(g, { t: 'move', p: me, units: ids(units), x: target.x, z: target.z, am: false })
         return
       }
       // enemy
-      cmdAttack(this.game, units, target)
+      issue(g, { t: 'attack', p: me, units: ids(units), target: target.id })
       return
     }
-    cmdMove(this.game, units, pt.x, pt.z)
+    issue(g, { t: 'move', p: me, units: ids(units), x: pt.x, z: pt.z, am: false })
   }
 
   confirmPlace(n) {
+    const g = this.game
+    const me = g.localPlayer
     const pt = this.r.screenToGround(n.x, n.y)
     const builder = this.selected.find((u) => u.proto?.worker && !u.dead)
     if (!builder) { this.stopPlacing(); return }
-    const res = tryPlaceBuilding(this.game, 0, this.placing.protoId, pt.x, pt.z, builder)
-    if (res.ok) {
-      this.stopPlacing()
-      this.ui.toast(`Constructing ${BUILDINGS[res.building.protoId].name}`)
-      this.ui.refresh(this.selected)
-    } else {
-      this.ui.toast(res.reason, true)
-    }
+    const proto = BUILDINGS[this.placing.protoId]
+    const chk = checkPlacement(g, me, this.placing.protoId, pt.x, pt.z)
+    if (!chk.ok) { this.ui.toast(chk.reason, true); return }
+    if (!canAfford(g, me, proto.cost)) { this.ui.toast('Not enough resources', true); return }
+    issue(g, { t: 'build', p: me, proto: this.placing.protoId, x: chk.x, z: chk.z, builder: builder.id })
+    this.stopPlacing()
+    this.ui.toast(`Constructing ${proto.name}`)
+    this.ui.refresh(this.selected)
   }
 
   clampCam() {
