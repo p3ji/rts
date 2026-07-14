@@ -12,6 +12,11 @@ export class Input {
     this.placing = null // { protoId, valid }
     this.drag = null // {x0,y0,x1,y1}
     this.keys = new Set()
+    this.chatOpen = false
+
+    this.chat = document.getElementById('chatbar')
+    this.chatInput = document.getElementById('chatinput')
+    this.chatInput.addEventListener('keydown', (e) => this.onChatKey(e))
 
     const el = renderer.renderer.domElement
     el.addEventListener('mousedown', (e) => this.onDown(e))
@@ -33,9 +38,11 @@ export class Input {
 
   onKey(e, down) {
     if (e.repeat) return
+    if (this.chatOpen) return // the chat field owns the keyboard while open
     const k = e.key.toLowerCase()
     if (down) this.keys.add(k); else this.keys.delete(k)
     if (!down) return
+    if (k === 'enter') { this.openChat(); e.preventDefault(); return }
     if (k === 'a') this.attackModifier = true
     if (k === 'escape') { this.stopPlacing(); this.attackModifier = false; this.ui.refresh(this.selected) }
     if (k === ' ') {
@@ -44,6 +51,45 @@ export class Input {
       each(this.game, (x) => { if (!th && x.owner === 0 && x.kind === 'building' && x.proto.kind === 'townhall') th = x })
       if (th) { this.r.camTarget.set(th.x, 0, th.z); this.r.updateCamera() }
       e.preventDefault()
+    }
+  }
+
+  // ---- command chat ----
+  openChat() {
+    this.chatOpen = true
+    this.keys.clear()
+    this.attackModifier = false
+    this.chat.classList.add('open')
+    this.chatInput.value = ''
+    this.chatInput.focus()
+  }
+
+  closeChat() {
+    this.chatOpen = false
+    this.chat.classList.remove('open')
+    this.chatInput.blur()
+  }
+
+  onChatKey(e) {
+    e.stopPropagation() // don't let game hotkeys fire while typing
+    if (e.key === 'Escape') { this.closeChat(); return }
+    if (e.key === 'Enter') {
+      this.runCommand(this.chatInput.value.trim().toLowerCase())
+      this.closeChat()
+    }
+  }
+
+  runCommand(cmd) {
+    if (!cmd) return
+    if (cmd === 'fog of war' || cmd === 'fog') {
+      const f = this.game.fog
+      f.enabled = !f.enabled
+      f.dirty = true
+      this.ui.toast(f.enabled
+        ? '🌫 Fog of war restored'
+        : '👁 Fog of war lifted — the whole map is revealed')
+    } else {
+      this.ui.toast(`Unknown command: "${cmd}"`, true)
     }
   }
 

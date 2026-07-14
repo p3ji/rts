@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { BUILDINGS, UNITS, MODELS, MODEL_FOOTPRINT, PLAYER_COLORS } from './data.js'
-import { MAP, each } from './state.js'
+import { MAP, each, isVisible, isExplored } from './state.js'
 
 // ---- asset loading -------------------------------------------------------------
 
@@ -268,6 +268,7 @@ export class Renderer {
 
     this.buildGround()
     this.buildScenery()
+    this.buildFog()
 
     this.meshes = new Map()
     this.effects = []
@@ -357,6 +358,53 @@ export class Renderer {
     }
   }
 
+  // ---- fog of war ------------------------------------------------------------------
+
+  buildFog() {
+    const f = this.game.fog
+    const n = f.n
+    const c = document.createElement('canvas')
+    c.width = c.height = n
+    const ctx = c.getContext('2d')
+    const tex = new THREE.CanvasTexture(c)
+    tex.magFilter = THREE.LinearFilter
+    tex.minFilter = THREE.LinearFilter
+    tex.colorSpace = THREE.SRGBColorSpace
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(MAP, MAP), mat)
+    mesh.rotation.x = -Math.PI / 2
+    mesh.position.y = 0.35
+    mesh.renderOrder = 3
+    this.scene.add(mesh)
+    this.fogCanvas = c
+    this.fogCtx = ctx
+    this.fogImage = ctx.createImageData(n, n)
+    this.fogTex = tex
+    this.fogMesh = mesh
+    this.updateFogTexture()
+  }
+
+  updateFogTexture() {
+    const f = this.game.fog
+    const d = this.fogImage.data
+    for (let i = 0; i < f.vis.length; i++) {
+      const a = f.vis[i] ? 0 : f.seen[i] ? 105 : 232 // clear / explored-dim / unexplored
+      const o = i * 4
+      d[o] = 8; d[o + 1] = 16; d[o + 2] = 13; d[o + 3] = a
+    }
+    this.fogCtx.putImageData(this.fogImage, 0, 0)
+    this.fogTex.needsUpdate = true
+  }
+
+  // enemy units only while in sight; buildings & resources persist once explored
+  entityVisible(e) {
+    const f = this.game.fog
+    if (!f || !f.enabled) return true
+    if (e.owner === 0) return true
+    if (e.kind === 'unit') return isVisible(this.game, e.x, e.z)
+    return isExplored(this.game, e.x, e.z)
+  }
+
   // ---- sync ------------------------------------------------------------------------
 
   sync() {
@@ -382,10 +430,18 @@ export class Renderer {
       }
     }
 
+    // fog of war: refresh the shroud texture and toggle the overlay
+    const fog = g.fog
+    if (fog) {
+      this.fogMesh.visible = fog.enabled
+      if (fog.enabled && fog.dirty) { this.updateFogTexture(); fog.dirty = false }
+    }
+
     const t = performance.now() / 1000
     for (const [id, grp] of this.meshes) {
       const e = g.entities.get(id)
       if (!e || e.dead) { this.scene.remove(grp); this.meshes.delete(id); continue }
+      grp.visible = this.entityVisible(e)
       const ud = grp.userData
       if (e.kind === 'unit') {
         const moved = Math.hypot(e.x - (ud.px ?? e.x), e.z - (ud.pz ?? e.z))

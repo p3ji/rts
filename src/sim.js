@@ -1,8 +1,10 @@
 import { UNITS, BUILDINGS, AGE_UP_COST, AGE_UP_TIME } from './data.js'
 import {
   MAP, dist, each, findNearest, supplyOf, hasTemple, ageOf,
-  canAfford, pay, spawnUnit, spawnBuilding, autoGather, blockedByObstacle,
+  canAfford, pay, spawnUnit, spawnBuilding, autoGather, blockedByObstacle, updateVision,
 } from './state.js'
+
+const VISION_INTERVAL = 0.25 // seconds between fog-of-war visibility recomputes
 
 const GATHER_TIME = 1.8
 const CARRY = 6
@@ -23,6 +25,11 @@ export function tick(g, dt) {
   auras(g, dt)
   cleanup(g)
   winCheck(g)
+
+  if (g.fog?.enabled) {
+    g.fog.visT += dt
+    if (g.fog.visT >= VISION_INTERVAL) { g.fog.visT = 0; updateVision(g) }
+  }
 }
 
 // ---- units -----------------------------------------------------------------

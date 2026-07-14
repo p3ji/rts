@@ -17,10 +17,12 @@ homeScreen(async (opts) => {
     assetsReady = true
   }
   showLoading(true, 1)
-  requestAnimationFrame(() => {
+  // Start on a timer, not requestAnimationFrame: rAF is suspended when the tab
+  // is backgrounded, which would otherwise hang the match before it begins.
+  setTimeout(() => {
     showLoading(false)
     start(opts)
-  })
+  }, 0)
 })
 
 function start(opts) {

@@ -2,6 +2,13 @@ import { UNITS, BUILDINGS, SUPPLY_CAP, PLAYER_COLORS, PLAYER_NAMES, DIFFICULTY }
 
 export const MAP = 220 // world is a MAP x MAP square centered on origin
 
+// ---- fog of war -------------------------------------------------------------
+// Coarse grid over the map. `vis` = in a friendly unit's sight this frame,
+// `seen` = ever explored (stays revealed as dimmed "shroud").
+export const FOG_CELL = 4
+export const FOG_N = Math.ceil(MAP / FOG_CELL)
+export const HUMAN = 0 // fog is tracked from the human player's perspective
+
 let nextId = 1
 
 // Deterministic RNG so a seed reproduces the same map
@@ -32,6 +39,14 @@ export function createGame({ aiCount = 1, difficulty = 'normal', seed = null } =
     obstacles: [], // impassable: { x, z, r, model: 'mountain'|'rock', variant, rot, scale }
     decor: [],     // visual only: { x, z, model, variant, rot, scale }
     events: [],    // render/UI events: {type, ...}
+    fog: {
+      enabled: true,
+      n: FOG_N,
+      vis: new Uint8Array(FOG_N * FOG_N),  // 1 = currently in sight
+      seen: new Uint8Array(FOG_N * FOG_N), // 1 = explored at least once
+      dirty: true,
+      visT: 0, // throttle accumulator
+    },
   }
 
   const nPlayers = 1 + Math.max(1, Math.min(3, aiCount))
@@ -53,7 +68,65 @@ export function createGame({ aiCount = 1, difficulty = 'normal', seed = null } =
   generateMap(g, rnd, spawns)
   for (let i = 0; i < nPlayers; i++) setupBase(g, i, spawns[i][0], spawns[i][1], rnd)
 
+  updateVision(g) // reveal the starting area before the first frame
+
   return g
+}
+
+// ---- fog of war queries -----------------------------------------------------
+
+export function sightRadius(e) {
+  if (e.kind === 'building') {
+    if (e.proto.kind === 'townhall') return 34
+    if (e.proto.kind === 'turret') return 32
+    return 22
+  }
+  return e.proto?.range ? Math.max(18, e.proto.range + 8) : 18
+}
+
+// Recompute the human player's visibility grid from their units & buildings.
+export function updateVision(g) {
+  const f = g.fog
+  if (!f) return
+  f.vis.fill(0)
+  const n = f.n, half = MAP / 2
+  for (const e of g.entities.values()) {
+    if (e.dead || e.owner !== HUMAN) continue
+    if (e.kind !== 'unit' && e.kind !== 'building') continue
+    const r = sightRadius(e)
+    const cx = (e.x + half) / FOG_CELL, cz = (e.z + half) / FOG_CELL, cr = r / FOG_CELL
+    const x0 = Math.max(0, Math.floor(cx - cr)), x1 = Math.min(n - 1, Math.ceil(cx + cr))
+    const z0 = Math.max(0, Math.floor(cz - cr)), z1 = Math.min(n - 1, Math.ceil(cz + cr))
+    const cr2 = cr * cr
+    for (let z = z0; z <= z1; z++) {
+      for (let x = x0; x <= x1; x++) {
+        const dx = x + 0.5 - cx, dz = z + 0.5 - cz
+        if (dx * dx + dz * dz <= cr2) { const i = z * n + x; f.vis[i] = 1; f.seen[i] = 1 }
+      }
+    }
+  }
+  f.dirty = true
+}
+
+function fogIndex(f, wx, wz) {
+  const n = f.n, half = MAP / 2
+  const x = Math.floor((wx + half) / FOG_CELL), z = Math.floor((wz + half) / FOG_CELL)
+  if (x < 0 || z < 0 || x >= n || z >= n) return -1
+  return z * n + x
+}
+
+export function isVisible(g, wx, wz) {
+  const f = g.fog
+  if (!f || !f.enabled) return true
+  const i = fogIndex(f, wx, wz)
+  return i < 0 ? true : f.vis[i] === 1
+}
+
+export function isExplored(g, wx, wz) {
+  const f = g.fog
+  if (!f || !f.enabled) return true
+  const i = fogIndex(f, wx, wz)
+  return i < 0 ? true : f.seen[i] === 1
 }
 
 // ---- procedural map ---------------------------------------------------------

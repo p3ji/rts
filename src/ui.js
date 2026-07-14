@@ -1,5 +1,5 @@
 import { UNITS, BUILDINGS, BUILD_MENU, DIFFICULTY, PLAYER_COLORS, AGE_UP_COST } from './data.js'
-import { each, supplyOf, ageOf, hasTemple, MAP } from './state.js'
+import { each, supplyOf, ageOf, hasTemple, isVisible, isExplored, MAP } from './state.js'
 import { tryQueueUnit, tryAgeUp } from './sim.js'
 import { PORTRAITS } from './render.js'
 
@@ -239,7 +239,13 @@ export class UI {
       ctx.arc((o.x + MAP / 2) * k, (o.z + MAP / 2) * k, o.r * k, 0, 7)
       ctx.fill()
     }
-    each(this.game, (e) => {
+    const g = this.game
+    each(g, (e) => {
+      // hide fogged entities: enemy units need live sight, everything else once explored
+      if (e.owner !== 0) {
+        if (e.kind === 'unit') { if (!isVisible(g, e.x, e.z)) return }
+        else if (!isExplored(g, e.x, e.z)) return
+      }
       const x = (e.x + MAP / 2) * k, y = (e.z + MAP / 2) * k
       if (e.kind === 'resource') {
         ctx.fillStyle = e.rtype === 'wood' ? (e.amount > 0 ? '#2e5424' : '#5a5646') : '#e8c447'
@@ -250,6 +256,11 @@ export class UI {
         ctx.fillRect(x - s / 2, y - s / 2, s, s)
       }
     })
+    // shroud overlay (fog canvas is grid-aligned to the map: col=gx, row=gz)
+    if (g.fog?.enabled && this.r.fogCanvas) {
+      ctx.imageSmoothingEnabled = true
+      ctx.drawImage(this.r.fogCanvas, 0, 0, S, S)
+    }
     const t = this.r.camTarget
     ctx.strokeStyle = 'rgba(255,255,255,0.75)'
     const vw = this.r.camDist * 1.1 * k, vh = this.r.camDist * 0.75 * k
