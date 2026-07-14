@@ -3,6 +3,7 @@ import { each, supplyOf, ageOf, hasTemple, canAfford, isVisible, isExplored, MAP
 import { issue } from './sim.js'
 import { PORTRAITS } from './render.js'
 import { NetClient, defaultRelayUrl } from './net.js'
+import { audio } from './audio.js'
 
 const $ = (id) => document.getElementById(id)
 const hex = (c) => '#' + c.toString(16).padStart(6, '0')
@@ -25,6 +26,10 @@ export class UI {
       this.r.updateCamera()
     })
     this.tooltip = $('tooltip')
+
+    const muteBtn = $('btn-mute')
+    muteBtn.textContent = audio.muted ? '🔇' : '🔊'
+    muteBtn.onclick = () => { muteBtn.textContent = audio.toggleMuted() ? '🔇' : '🔊' }
   }
 
   toast(msg, warn = false) {
@@ -71,8 +76,8 @@ export class UI {
     return s.trim() || '<span class="c-w">free</span>'
   }
 
-  signature(selected) {
-    if (!selected.length) return 'empty'
+  signature(selected, inspected) {
+    if (!selected.length) return inspected ? `insp:${inspected.id}:${Math.ceil(inspected.amount)}` : 'empty'
     const f = selected[0]
     const p = this.game.players[this.me]
     const parts = [selected.map((e) => e.id).join(','), f.constructing ? Math.round(f.progress * 20) : 'x',
@@ -82,14 +87,15 @@ export class UI {
     return parts.join('#')
   }
 
-  refresh(selected) {
-    this.panelSig = this.signature(selected)
+  refresh(selected, inspected = null) {
+    this.panelSig = this.signature(selected, inspected)
     this.tooltip.style.display = 'none'
     const panel = $('sel-panel')
     const actions = $('actions')
     actions.innerHTML = ''
 
     if (!selected.length) {
+      if (inspected && !inspected.dead) { this.renderResourcePanel(inspected); return }
       panel.innerHTML = `<div class="hint">
         <b>Drag-select</b> units &nbsp;·&nbsp; <b>Right-click</b> move / attack / gather / repair
         &nbsp;·&nbsp; <b>A + click</b> attack-move &nbsp;·&nbsp; <b>Space</b> jump to base
@@ -131,6 +137,8 @@ export class UI {
       if (bits.length) extra = `<div class="sel-extra">${bits.join(' · ')}</div>`
     }
 
+    const queueHtml = first.kind === 'building' && first.queue?.length ? this.queueChipsHtml(first) : ''
+
     panel.innerHTML = `
       <img class="portrait" src="${portrait}" alt="">
       <div class="sel-info">
@@ -139,6 +147,7 @@ export class UI {
         ${progressHtml}
         <div class="sel-desc">${proto.desc || ''}</div>
         ${extra}
+        ${queueHtml}
       </div>`
 
     // ---- action buttons ----
@@ -182,18 +191,6 @@ export class UI {
         }
         actions.appendChild(b)
       }
-
-      if (first.queue.length) {
-        const q = document.createElement('div')
-        q.className = 'queue'
-        const cur = first.queue[0]
-        const curProto = UNITS[cur.protoId]
-        const pct = cur.started ? Math.round((1 - cur.t / curProto.buildTime) * 100) : 0
-        q.innerHTML = `<div class="queue-line">Producing: <b>${curProto.name}</b>${cur.started ? '' : ' (waiting for supply)'}</div>
-          <div class="pbar"><div style="width:${pct}%"></div></div>
-          ${first.queue.length > 1 ? `<div class="queue-line dim">Next: ${first.queue.slice(1).map((i) => UNITS[i.protoId].name).join(' → ')}</div>` : ''}`
-        actions.appendChild(q)
-      }
     }
 
     if (first.kind === 'unit' && first.proto.worker) {
@@ -211,10 +208,58 @@ export class UI {
     }
   }
 
+  // Compact icon+count chips for a building's production queue — shown beside the
+  // portrait (always visible) rather than in the scrollable action grid below it.
+  queueChipsHtml(b) {
+    const groups = []
+    for (const q of b.queue) {
+      const last = groups[groups.length - 1]
+      if (last && last.protoId === q.protoId) last.count++
+      else groups.push({ protoId: q.protoId, count: 1 })
+    }
+    const cur = b.queue[0]
+    const curProto = UNITS[cur.protoId]
+    const pct = cur.started ? Math.round((1 - cur.t / curProto.buildTime) * 100) : 0
+    const chips = groups.map((grp, i) => {
+      const proto = UNITS[grp.protoId]
+      const isCur = i === 0
+      const waiting = isCur && !cur.started
+      const title = `${proto.name}${grp.count > 1 ? ` ×${grp.count}` : ''}${waiting ? ' — waiting for supply' : ''}`
+      return `<div class="qchip${isCur ? ' cur' : ''}${waiting ? ' waiting' : ''}" title="${title}">
+        <img src="${PORTRAITS[grp.protoId]}" alt="">
+        ${grp.count > 1 ? `<span class="qcount">${grp.count}</span>` : ''}
+        ${isCur ? `<div class="qprog" style="width:${pct}%"></div>` : ''}
+      </div>`
+    }).join('')
+    return `<div class="qchips">${chips}</div>`
+  }
+
+  // Read-only info panel for a clicked resource node (not an actionable selection).
+  renderResourcePanel(e) {
+    const isWood = e.rtype === 'wood'
+    const name = isWood ? 'Forest' : 'Gold Deposit'
+    const portrait = PORTRAITS[e.rtype] || ''
+    const depleted = e.amount <= 0
+    const pct = Math.max(0, Math.round((e.amount / e.maxAmount) * 100))
+    $('sel-panel').innerHTML = `
+      <img class="portrait" src="${portrait}" alt="">
+      <div class="sel-info">
+        <div class="sel-name">${name}</div>
+        <div class="sel-stats">
+          <span class="stat">${isWood ? '🪵' : '🪙'} ${depleted ? 'Depleted' : `${Math.ceil(e.amount)} / ${e.maxAmount}`}</span>
+        </div>
+        <div class="pbar"><div style="width:${pct}%"></div></div>
+        <div class="sel-desc">${isWood
+          ? 'Send villagers here to chop wood. A depleted forest is left as stumps.'
+          : 'Send villagers here to mine gold. The vein is gone once fully mined.'}</div>
+      </div>`
+  }
+
   actionBtn(img, name, subHtml, disabled = false) {
     const b = document.createElement('button')
     b.className = 'action' + (disabled ? ' disabled' : '')
     b.innerHTML = `<img src="${img}" alt="" draggable="false"><span>${name}</span><small>${subHtml}</small>`
+    if (!disabled) b.addEventListener('click', () => audio.click())
     return b
   }
 
@@ -269,7 +314,7 @@ export class UI {
 
   drainEvents() {
     for (const ev of this.game.events) {
-      if (ev.type === 'wave' && ev.target === this.me) this.toast(`⚠ ${this.game.players[ev.owner].name} is attacking! (${ev.size} units)`, true)
+      if (ev.type === 'wave' && ev.target === this.me) { this.toast(`⚠ ${this.game.players[ev.owner].name} is attacking! (${ev.size} units)`, true); audio.alarm() }
       if (ev.type === 'ageup') {
         this.toast(ev.owner === this.me ? '🏰 You have advanced to Age II!' : `${this.game.players[ev.owner].name} has advanced to Age II`, ev.owner !== this.me)
       }
@@ -278,9 +323,9 @@ export class UI {
       }
       if (ev.type === 'complete' && ev.owner === this.me) {
         const e = this.game.entities.get(ev.id)
-        if (e) this.toast(`${e.proto.name} complete`)
+        if (e) { this.toast(`${e.proto.name} complete`); audio.buildComplete() }
       }
-      if (ev.type === 'cmdfail' && ev.owner === this.me) this.toast(ev.reason, true)
+      if (ev.type === 'cmdfail' && ev.owner === this.me) { this.toast(ev.reason, true); audio.error() }
     }
     this.game.events.length = 0
   }
@@ -299,7 +344,8 @@ export class UI {
     this.updateTop()
     this.drawMinimap()
     this.drainEvents()
-    if (this.signature(selected) !== this.panelSig) this.refresh(selected)
+    const inspected = selected.length ? null : this.getInput().inspected
+    if (this.signature(selected, inspected) !== this.panelSig) this.refresh(selected, inspected)
   }
 }
 

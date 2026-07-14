@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { BUILDINGS, UNITS, MODELS, MODEL_FOOTPRINT, PLAYER_COLORS } from './data.js'
 import { MAP, each, isVisible, isExplored } from './state.js'
+import { audio } from './audio.js'
 
 // ---- asset loading -------------------------------------------------------------
 
@@ -89,6 +90,8 @@ export function generatePortraits() {
     obj.rotation.y = -0.5
     shoot(obj, id)
   }
+  shoot(modelInstance(MODELS.resources.tree[0], 2.3 * 2.6), 'wood')
+  shoot(modelInstance(MODELS.resources.gold[0], 1.7 * 2.3), 'gold')
   rt.dispose()
 }
 
@@ -419,14 +422,18 @@ export class Renderer {
           this.scene.remove(grp)
           this.meshes.delete(ev.id)
           this.deathFx(ev.x, ev.z, ev.kind)
+          if (this.isNearCamera(ev.x, ev.z)) audio.death(ev.kind === 'building')
         }
       } else if (ev.type === 'depleted') {
         const e = g.entities.get(ev.id)
         if (e && e.rtype === 'wood') this.rebuildMesh(e) // swap to cut stumps
       } else if (ev.type === 'ageup') {
         each(g, (e) => { if (e.kind === 'building' && e.owner === ev.owner) this.rebuildMesh(e) })
+        if (ev.owner === g.localPlayer) audio.ageUp()
       } else if (ev.type === 'shot') {
         this.shotFx(ev)
+      } else if (ev.type === 'gather' && this.isNearCamera(ev.x, ev.z)) {
+        if (ev.rtype === 'wood') audio.chop(); else audio.mine()
       }
     }
 
@@ -499,6 +506,26 @@ export class Renderer {
     if (e.kind === 'resource') {
       grp.add(this.resourceMesh(e))
       grp.rotation.y = e.rot || 0
+      // type ring, always on, so wood vs gold reads at a glance from any zoom/angle
+      const rad = e.radius + 0.3
+      const typeColor = e.rtype === 'wood' ? 0x4a8f3a : 0xe8c447
+      const typeRing = new THREE.Mesh(
+        new THREE.RingGeometry(rad - 0.14, rad, 32),
+        new THREE.MeshBasicMaterial({ color: typeColor, side: THREE.DoubleSide, transparent: true, opacity: 0.6 })
+      )
+      typeRing.rotation.x = -Math.PI / 2
+      typeRing.position.y = 0.04
+      grp.add(typeRing)
+      // selection ring, reuses the same sync() logic as units/buildings below
+      const selRing = new THREE.Mesh(
+        new THREE.RingGeometry(rad + 0.16, rad + 0.38, 32),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.9 })
+      )
+      selRing.rotation.x = -Math.PI / 2
+      selRing.position.y = 0.06
+      selRing.visible = false
+      grp.add(selRing)
+      grp.userData.selRing = selRing
     } else if (e.kind === 'building') {
       const body = modelInstance(buildingModelName(e.protoId, e.age), MODEL_FOOTPRINT[e.protoId])
       grp.add(body)
@@ -643,6 +670,11 @@ export class Renderer {
   shotFx(ev) {
     const d = Math.hypot(ev.to.x - ev.from.x, ev.to.z - ev.from.z)
     const proto = ev.srcProto
+    if (this.isNearCamera(ev.from.x, ev.from.z)) {
+      if (proto === 'catapult') audio.siege()
+      else if (d >= 3) audio.bow()
+      else audio.sword()
+    }
     if (proto === 'catapult') {
       const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.3, 0), lamb(0x8d8d8d))
       this.scene.add(rock)
@@ -684,6 +716,13 @@ export class Renderer {
     this.impact(ev.to.x, ev.to.z, 0xfff0c8, 0.8)
   }
 
+  // gates ambient sfx (combat/gather/death) so distant, off-screen skirmishes
+  // don't fire sounds — roughly "within the visible play area around the camera"
+  isNearCamera(x, z) {
+    const t = this.camTarget
+    return Math.hypot(x - t.x, z - t.z) < this.camDist * 1.6
+  }
+
   impact(x, z, color, scale = 1) {
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.1, 0.35, 16),
@@ -709,6 +748,54 @@ export class Renderer {
     this.effects.push({
       obj: s, t0: performance.now(), dur: big ? 700 : 400,
       update: (t) => { s.scale.setScalar(1 + t * (big ? 3 : 2)); s.material.opacity = 0.7 * (1 - t) },
+    })
+  }
+
+  // Click-feedback marker for issued orders. `rally: true` draws a small flag
+  // pole (used when setting a building's rally point); otherwise a plain
+  // expanding ring (used for move/attack-move/gather confirmation).
+  orderFx(x, z, color = 0xffffff, rally = false) {
+    if (!rally) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.15, 0.4, 24),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+      )
+      ring.rotation.x = -Math.PI / 2
+      ring.position.set(x, 0.12, z)
+      this.scene.add(ring)
+      this.effects.push({
+        obj: ring, t0: performance.now(), dur: 420,
+        update: (t) => { ring.scale.setScalar(1 + t * 2.2); ring.material.opacity = 0.85 * (1 - t) },
+      })
+      return
+    }
+    const grp = new THREE.Group()
+    grp.position.set(x, 0, z)
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 6), lamb(0x6a4e30))
+    pole.position.y = 0.8
+    grp.add(pole)
+    const flag = box(grp, 0.5, 0.32, 0.03, lamb(color), 0.27, 1.5, 0)
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.2, 0.55, 24),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, side: THREE.DoubleSide })
+    )
+    ring.rotation.x = -Math.PI / 2
+    ring.position.y = 0.1
+    grp.add(ring)
+    pole.material.transparent = true
+    flag.material.transparent = true
+    this.scene.add(grp)
+    this.effects.push({
+      obj: grp, t0: performance.now(), dur: 1000,
+      update: (t) => {
+        grp.scale.setScalar(Math.min(1, t * 4))
+        flag.rotation.y = Math.sin(t * 14) * 0.3
+        ring.scale.setScalar(1 + t * 2.5)
+        ring.material.opacity = 0.8 * (1 - t)
+        const fade = t > 0.6 ? 1 - (t - 0.6) / 0.4 : 1
+        pole.material.opacity = fade
+        flag.material.opacity = fade
+      },
     })
   }
 

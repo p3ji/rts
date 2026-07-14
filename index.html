@@ -23,6 +23,11 @@
     #topbar .spacer { flex: 1; }
     #age-ind { color: #e8c88a; font-weight: 600; font-size: 15px; }
     #clock { opacity: 0.85; font-variant-numeric: tabular-nums; font-weight: 600; }
+    #btn-mute {
+      pointer-events: auto; background: transparent; border: none; color: #e8dcc0;
+      font-size: 18px; cursor: pointer; opacity: 0.85; padding: 4px;
+    }
+    #btn-mute:hover { opacity: 1; }
 
     /* ---- bottom HUD ---- */
     #hud {
@@ -66,6 +71,26 @@
     .queue { width: 100%; font-size: 14px; color: #cdbfa0; padding: 6px 2px; display: flex; flex-direction: column; gap: 5px; }
     .queue-line b { color: #f0ead8; }
     .queue-line.dim { color: #94886a; font-size: 13px; }
+
+    /* production queue chips — always visible beside the selection portrait */
+    .qchips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+    .qchip {
+      position: relative; width: 38px; height: 38px; border-radius: 6px; overflow: hidden;
+      border: 1px solid #5c4c2c; background: #17120a;
+    }
+    .qchip.cur { border-color: #d8a52e; }
+    .qchip.waiting { border-color: #c0392b; }
+    .qchip.waiting::after {
+      content: '⏸'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: rgba(20,14,7,0.55); font-size: 14px; color: #ffb0a6;
+    }
+    .qchip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .qcount {
+      position: absolute; top: -1px; right: -1px; background: #241a06; color: #ffe9b0;
+      font-size: 10px; font-weight: 800; padding: 0 3px; border-radius: 4px 0 4px 0;
+      border-left: 1px solid #5c4c2c; border-bottom: 1px solid #5c4c2c; line-height: 1.4;
+    }
+    .qprog { position: absolute; left: 0; bottom: 0; height: 3px; background: #f0c04a; }
 
     #minimap { width: 172px; height: 172px; min-width: 172px; border: 2px solid #5c4c2c; border-radius: 8px; cursor: pointer; }
 
@@ -207,6 +232,7 @@
     <div class="spacer"></div>
     <div id="age-ind">Age I — Village Age</div>
     <div id="clock">0:00</div>
+    <button id="btn-mute" title="Mute/unmute">🔊</button>
   </div>
 
   <div id="hud">

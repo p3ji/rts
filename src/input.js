@@ -1,4 +1,4 @@
-import { BUILDINGS } from './data.js'
+import { BUILDINGS, PLAYER_COLORS } from './data.js'
 import { each, canAfford, MAP } from './state.js'
 import { issue, checkPlacement } from './sim.js'
 
@@ -10,6 +10,7 @@ export class Input {
     this.r = renderer
     this.ui = ui
     this.selected = []
+    this.inspected = null // a resource node clicked to inspect (read-only, not an actionable selection)
     this.attackModifier = false
     this.placing = null // { protoId, valid }
     this.drag = null // {x0,y0,x1,y1}
@@ -123,7 +124,10 @@ export class Input {
       if (this.attackModifier) {
         const pt = this.r.screenToGround(n.x, n.y)
         const units = this.selected.filter((u) => u.kind === 'unit' && !u.dead)
-        if (units.length) issue(this.game, { t: 'move', p: this.game.localPlayer, units: ids(units), x: pt.x, z: pt.z, am: true })
+        if (units.length) {
+          issue(this.game, { t: 'move', p: this.game.localPlayer, units: ids(units), x: pt.x, z: pt.z, am: true })
+          this.r.orderFx(pt.x, pt.z, 0xe0483a)
+        }
         this.attackModifier = false
         return
       }
@@ -154,6 +158,27 @@ export class Input {
       this.clampCam()
       this.r.updateCamera()
     }
+    if (!this.drag && !this.pan) this.updateCursor(this.nxy(e))
+  }
+
+  // Swaps the canvas cursor to hint what a click will do: attack, gather,
+  // interact with your own stuff, or place a building (valid/blocked).
+  updateCursor(n) {
+    const el = this.r.renderer.domElement
+    if (this.pan) { el.style.cursor = 'grabbing'; return }
+    if (this.placing) {
+      const pt = this.r.screenToGround(n.x, n.y)
+      const chk = pt && checkPlacement(this.game, this.game.localPlayer, this.placing.protoId, pt.x, pt.z)
+      el.style.cursor = chk?.ok ? 'copy' : 'not-allowed'
+      return
+    }
+    if (this.attackModifier) { el.style.cursor = 'crosshair'; return }
+    const units = this.selected.filter((u) => u.kind === 'unit' && !u.dead)
+    const ent = this.r.pickEntity(n.x, n.y)
+    if (!ent) { el.style.cursor = 'default'; return }
+    if (ent.kind === 'resource') { el.style.cursor = units.some((u) => u.proto.worker) ? 'pointer' : 'default'; return }
+    if (ent.owner !== this.game.localPlayer) { el.style.cursor = units.length ? 'crosshair' : 'default'; return }
+    el.style.cursor = 'pointer'
   }
 
   onUp(e) {
@@ -169,11 +194,17 @@ export class Input {
   clickSelect(n, additive) {
     const ent = this.r.pickEntity(n.x, n.y)
     if (!additive) this.clearSelection()
-    if (ent && ent.kind !== 'resource' && ent.owner === this.game.localPlayer) {
+    if (ent && ent.kind === 'resource') {
+      this.inspected = ent
       ent.selected = true
-      if (!this.selected.includes(ent)) this.selected.push(ent)
+    } else {
+      this.inspected = null
+      if (ent && ent.owner === this.game.localPlayer) {
+        ent.selected = true
+        if (!this.selected.includes(ent)) this.selected.push(ent)
+      }
     }
-    this.ui.refresh(this.selected)
+    this.ui.refresh(this.selected, this.inspected)
   }
 
   boxSelect(d, additive) {
@@ -199,6 +230,7 @@ export class Input {
   clearSelection() {
     each(this.game, (ent) => { ent.selected = false })
     this.selected = []
+    this.inspected = null
   }
 
   rightCommand(n) {
@@ -209,8 +241,11 @@ export class Input {
     const target = this.r.pickEntity(n.x, n.y)
     const pt = this.r.screenToGround(n.x, n.y)
 
+    const myColor = PLAYER_COLORS[me]
+
     if (buildings.length && !units.length) {
       for (const b of buildings) issue(g, { t: 'rally', p: me, b: b.id, x: pt.x, z: pt.z })
+      this.r.orderFx(pt.x, pt.z, myColor, true)
       this.ui.toast('Rally point set')
       return
     }
@@ -222,26 +257,30 @@ export class Input {
         if (workers.length) { issue(g, { t: 'gather', p: me, units: ids(workers), node: target.id }); this.ui.toast('Gathering') }
         const rest = units.filter((u) => !u.proto.worker)
         if (rest.length) issue(g, { t: 'move', p: me, units: ids(rest), x: target.x, z: target.z, am: false })
+        this.r.orderFx(target.x, target.z, target.rtype === 'wood' ? 0x4a8f3a : 0xe8c447)
         return
       }
       if (target.owner === me) {
         // friendly: resume construction or repair
         if (target.kind === 'building' && target.constructing) {
           const workers = units.filter((u) => u.proto.worker)
-          if (workers.length) { issue(g, { t: 'construct', p: me, units: ids(workers), site: target.id }); this.ui.toast('Resuming construction'); return }
+          if (workers.length) { issue(g, { t: 'construct', p: me, units: ids(workers), site: target.id }); this.ui.toast('Resuming construction'); this.r.orderFx(target.x, target.z, myColor); return }
         }
         if (target.hp < target.maxHp) {
           const fixers = units.filter((u) => u.proto.repairs)
-          if (fixers.length) { issue(g, { t: 'repair', p: me, units: ids(fixers), target: target.id }); this.ui.toast('Repairing'); return }
+          if (fixers.length) { issue(g, { t: 'repair', p: me, units: ids(fixers), target: target.id }); this.ui.toast('Repairing'); this.r.orderFx(target.x, target.z, myColor); return }
         }
         issue(g, { t: 'move', p: me, units: ids(units), x: target.x, z: target.z, am: false })
+        this.r.orderFx(target.x, target.z, myColor)
         return
       }
       // enemy
       issue(g, { t: 'attack', p: me, units: ids(units), target: target.id })
+      this.r.orderFx(target.x, target.z, 0xe0483a)
       return
     }
     issue(g, { t: 'move', p: me, units: ids(units), x: pt.x, z: pt.z, am: false })
+    this.r.orderFx(pt.x, pt.z, myColor)
   }
 
   confirmPlace(n) {

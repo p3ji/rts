@@ -131,6 +131,7 @@ function gatherTick(g, u, o, dt) {
       u.gatherT = 0
       node.amount -= CARRY
       u.carry = { type: node.rtype === 'wood' ? 'w' : 'g', amt: CARRY }
+      g.events.push({ type: 'gather', rtype: node.rtype, x: u.x, z: u.z })
       if (node.amount <= 0) g.events.push({ type: 'depleted', id: node.id, rtype: node.rtype })
       u.order = { type: 'return', backTo: o }
     }

@@ -4,6 +4,7 @@ import { Renderer, loadAssets, generatePortraits } from './render.js'
 import { Input } from './input.js'
 import { UI, homeScreen, showLoading } from './ui.js'
 import { DIFFICULTY } from './data.js'
+import { audio } from './audio.js'
 
 const FIXED_DT = 1 / 30
 const ONLINE_INPUT_DELAY = 6 // ticks (~200ms @ 30Hz) — buffer for the remote peer's command to arrive
@@ -139,6 +140,7 @@ function wireGame(game) {
   window.__checksum = () => checksum(game)
   window.__dbg = { input, ui, renderer }
   ui.refresh([])
+  audio.startMusic()
 
   return { renderer, input, ui }
 }
