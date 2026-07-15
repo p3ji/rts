@@ -7,8 +7,12 @@ import { DIFFICULTY } from './data.js'
 import { audio } from './audio.js'
 
 const FIXED_DT = 1 / 30
-const ONLINE_INPUT_DELAY = 6 // ticks (~200ms @ 30Hz) — buffer for the remote peer's command to arrive
-const CHECKSUM_INTERVAL = 30 // ticks between desync-check broadcasts
+// Commands execute 0.5s after being issued. This gives LAN/Wi-Fi packets room to
+// arrive before their execution tick without freezing the simulation every time a
+// heartbeat is a little late.
+const ONLINE_INPUT_DELAY = 15
+const CHECKSUM_INTERVAL = 30
+const NET_REPORT_INTERVAL = 3000
 
 let assetsReady = false
 
@@ -20,8 +24,7 @@ homeScreen(async (opts) => {
     assetsReady = true
   }
   showLoading(true, 1)
-  // Start on a timer, not requestAnimationFrame: rAF is suspended when the tab
-  // is backgrounded, which would otherwise hang the match before it begins.
+  // Timers still run when a tab is backgrounded; requestAnimationFrame may not.
   setTimeout(() => {
     showLoading(false)
     if (opts.mode === 'online') startOnline(opts)
@@ -32,12 +35,9 @@ homeScreen(async (opts) => {
 function start(opts) {
   const game = createGame(opts)
   const { renderer, input, ui } = wireGame(game)
-  ui.toast(`${opts.aiCount} rival kingdom${opts.aiCount > 1 ? 's' : ''} · ${DIFFICULTY[opts.difficulty].name} · destroy every enemy Town Center`)
+  ui.toast(`${opts.aiCount} rival kingdom${opts.aiCount > 1 ? 's' : ''} - ${DIFFICULTY[opts.difficulty].name} - destroy every enemy Town Center`)
 
   let ended = false
-
-  // Fixed-step simulation on a timer so the game keeps running even when the
-  // tab is hidden (rAF is throttled/suspended in background tabs).
   let simLast = performance.now()
   setInterval(() => {
     const now = performance.now()
@@ -47,31 +47,31 @@ function start(opts) {
       tick(game, FIXED_DT)
       acc -= FIXED_DT
     }
-    simLast -= acc * 1000 // carry remainder
+    simLast -= acc * 1000
     if (game.over && !ended) { ended = true; ui.showEnd(game.over) }
   }, 1000 * FIXED_DT)
 
   runRenderLoop(game, renderer, input, ui)
 }
 
-// ---- online 1v1: deterministic lockstep over the WebSocket relay ----------------
+// ---- online 1v1: buffered delayed-command simulation -----------------------------
 //
-// Both peers run the identical sim (see sim.js checksum()). Locally-issued commands
-// are scheduled `inputDelay` ticks in the future (via issue()) and broadcast to the
-// peer tagged with that same exec tick. A client may not simulate tick T until it
-// has received the peer's declaration — command or heartbeat — for tick T, which
-// keeps the two simulations lockstepped. The first `inputDelay` ticks are exempt
-// (nothing could have been issued for them yet) to avoid a bootstrap deadlock.
+// Both peers run the same deterministic simulation. A player command is tagged for
+// execution 15 ticks in the future. This is intentionally *not* a strict per-tick
+// heartbeat gate: that design freezes both players whenever Wi-Fi has a transient
+// delayed packet. The 500ms command buffer absorbs normal LAN jitter while each
+// client keeps its simulation and rendering fluid. Checksums still detect a real
+// late-command desync instead of hiding it.
 function startOnline(opts) {
   const { net, seed, slot } = opts
   const game = createGame({ humanCount: 2, aiCount: 0, difficulty: 'normal', seed })
   game.localPlayer = slot
   game.inputDelay = ONLINE_INPUT_DELAY
 
-  let remoteTick = 0
   let peerLeft = false
   let desynced = false
   const localChecksums = new Map()
+  const net$ = { lateCommands: 0, maxLateTicks: 0, ticksProcessed: 0, windowStart: performance.now() }
 
   game.onCommand = (execTick, cmd) => net.sendCommand(execTick, cmd)
 
@@ -80,23 +80,30 @@ function startOnline(opts) {
   net.onMessage = (msg) => {
     if (msg.type === 'cmd') {
       for (const cmd of msg.cmds) scheduleAt(game, msg.tick, cmd)
-      if (msg.tick > remoteTick) remoteTick = msg.tick
+      if (msg.cmds.length && msg.tick <= game.tick) {
+        const lateBy = game.tick - msg.tick + 1
+        net$.lateCommands++
+        net$.maxLateTicks = Math.max(net$.maxLateTicks, lateBy)
+      }
     } else if (msg.type === 'checksum') {
       const mine = localChecksums.get(msg.tick)
       if (mine !== undefined && mine !== msg.hash && !desynced) {
         desynced = true
-        ui.toast('⚠ Desync detected — simulations have diverged. Best to restart the match.', true)
+        ui.toast('Desync detected - simulations have diverged. Please restart the match.', true)
       }
+    } else if (msg.type === 'peer_left') {
+      peerLeft = true
+      ui.toast('Your rival disconnected.', true)
     }
   }
   net.onClose = () => {
     if (peerLeft) return
     peerLeft = true
-    ui.toast('Your rival disconnected.', true)
+    ui.toast('Connection to the relay was lost.', true)
   }
 
-  ui.toast(`Online match vs ${game.players[1 - slot].name} · destroy their Town Center to win`)
-  window.__net = { get remoteTick() { return remoteTick } }
+  ui.toast(`Online match vs ${game.players[1 - slot].name} - commands have a 0.5s network buffer`)
+  window.__net = { get tick() { return game.tick }, stats: net$ }
 
   let ended = false
   let simLast = performance.now()
@@ -105,27 +112,41 @@ function startOnline(opts) {
     const now = performance.now()
     let acc = Math.min(0.25, (now - simLast) / 1000)
     simLast = now
+
     while (acc >= FIXED_DT) {
-      const nextTick = game.tick + 1
-      // don't outrun the peer's confirmed input, except for the initial delay buffer
-      if (nextTick > game.inputDelay && nextTick > remoteTick) break
       tick(game, FIXED_DT)
-      net.sendHeartbeat(game.tick + game.inputDelay)
+      net$.ticksProcessed++
       if (game.tick % CHECKSUM_INTERVAL === 0) {
         const h = checksum(game)
         localChecksums.set(game.tick, h)
-        if (localChecksums.size > 600) for (const k of localChecksums.keys()) { if (k < game.tick - 600) localChecksums.delete(k); else break }
+        if (localChecksums.size > 600) {
+          for (const k of localChecksums.keys()) {
+            if (k < game.tick - 600) localChecksums.delete(k)
+            else break
+          }
+        }
         net.sendChecksum(game.tick, h)
       }
       acc -= FIXED_DT
     }
+    simLast -= acc * 1000
+
+    const windowMs = now - net$.windowStart
+    if (windowMs >= NET_REPORT_INTERVAL) {
+      const expectedTicks = Math.round(windowMs / (1000 * FIXED_DT))
+      console.log(`[net] tick=${game.tick} | ticks ${net$.ticksProcessed}/${expectedTicks} expected | late commands ${net$.lateCommands} (worst ${net$.maxLateTicks} ticks)`)
+      if (net$.lateCommands) ui.toast(`Network delay exceeded the 0.5s buffer (${net$.lateCommands} late action${net$.lateCommands > 1 ? 's' : ''}).`, true)
+      net$.lateCommands = 0
+      net$.maxLateTicks = 0
+      net$.ticksProcessed = 0
+      net$.windowStart = now
+    }
+
     if (game.over && !ended) { ended = true; ui.showEnd(game.over) }
   }, 1000 * FIXED_DT)
 
   runRenderLoop(game, renderer, input, ui)
 }
-
-// ---- shared setup: renderer/input/ui wiring + debug handles ---------------------
 
 function wireGame(game) {
   const canvas = document.getElementById('game')
@@ -151,8 +172,8 @@ function runRenderLoop(game, renderer, input, ui) {
     const dt = Math.min(0.1, (now - last) / 1000)
     last = now
     input.update(dt)
-    renderer.sync()           // consumes spawn/death/shot events
-    ui.update(input.selected) // consumes remaining events, then clears
+    renderer.sync()
+    ui.update(input.selected)
     renderer.render()
     requestAnimationFrame(frame)
   }
