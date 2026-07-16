@@ -251,7 +251,10 @@ export class Renderer {
     this.scene.fog = new THREE.Fog(0xa5cfe8, 190, 420)
 
     this.camera = new THREE.PerspectiveCamera(46, 1, 1, 700)
-    const s0 = game.spawns?.[0] ?? [-MAP / 2 + 26, MAP / 2 - 26]
+    // Center on the LOCAL player's own base, not always player 0's — otherwise
+    // whoever isn't slot 0 (e.g. the joiner in an online 1v1) starts staring at
+    // their opponent's corner of the map instead of their own.
+    const s0 = game.spawns?.[game.localPlayer] ?? game.spawns?.[0] ?? [-MAP / 2 + 26, MAP / 2 - 26]
     this.camTarget = new THREE.Vector3(s0[0], 0, s0[1])
     this.camDist = 62
     this.updateCamera()
