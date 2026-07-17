@@ -40,6 +40,7 @@ function start(opts) {
   let ended = false
   let simLast = performance.now()
   setInterval(() => {
+    if (game.paused) { simLast = performance.now(); return }
     const now = performance.now()
     let acc = Math.min(0.25, (now - simLast) / 1000)
     simLast = now
@@ -63,10 +64,11 @@ function start(opts) {
 // client keeps its simulation and rendering fluid. Checksums still detect a real
 // late-command desync instead of hiding it.
 function startOnline(opts) {
-  const { net, seed, slot } = opts
-  const game = createGame({ humanCount: 2, aiCount: 0, difficulty: 'normal', seed })
+  const { net, seed, slot, mapSettings } = opts
+  const game = createGame({ humanCount: 2, aiCount: 0, difficulty: 'normal', seed, mapSettings })
   game.localPlayer = slot
   game.inputDelay = ONLINE_INPUT_DELAY
+  game.isOnline = true
 
   let peerLeft = false
   let desynced = false

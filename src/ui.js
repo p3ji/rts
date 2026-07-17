@@ -1,4 +1,4 @@
-import { UNITS, BUILDINGS, BUILD_MENU, DIFFICULTY, PLAYER_COLORS, AGE_UP_COST } from './data.js'
+import { UNITS, BUILDINGS, BUILD_MENU, DIFFICULTY, PLAYER_COLORS, AGE_UP_COST, RESOURCE_ABUNDANCE } from './data.js'
 import { each, supplyOf, ageOf, hasTemple, canAfford, isVisible, isExplored, MAP } from './state.js'
 import { issue } from './sim.js'
 import { PORTRAITS } from './render.js'
@@ -32,6 +32,52 @@ export class UI {
     muteBtn.onclick = () => { muteBtn.textContent = audio.toggleMuted() ? '🔇' : '🔊' }
 
     $('btn-army').onclick = () => { audio.click(); this.getInput().selectAllArmy() }
+
+    this.setupSettings()
+  }
+
+  // ---- settings modal: pause, volume, fog toggle, quit ---------------------------
+
+  setupSettings() {
+    const modal = $('settings-modal')
+    const open = () => modal.classList.add('show')
+    const close = () => modal.classList.remove('show')
+    $('btn-settings').onclick = open
+    $('btn-settings-close').onclick = close
+
+    const pauseBtn = $('btn-pause')
+    const banner = $('pause-banner')
+    pauseBtn.onclick = () => {
+      if (this.game.isOnline) {
+        this.toast("Pause isn't available in online matches — each player's game keeps running independently.", true)
+        return
+      }
+      this.game.paused = !this.game.paused
+      pauseBtn.textContent = this.game.paused ? '▶ Resume' : '⏸ Pause'
+      pauseBtn.classList.toggle('on', this.game.paused)
+      banner.classList.toggle('show', this.game.paused)
+    }
+
+    $('vol-music').value = Math.round(audio.musicVolume * 100)
+    $('vol-music').oninput = (e) => audio.setMusicVolume(Number(e.target.value) / 100)
+    $('vol-sfx').value = Math.round(audio.sfxVolume * 100)
+    $('vol-sfx').oninput = (e) => audio.setSfxVolume(Number(e.target.value) / 100)
+
+    const fogBtn = $('btn-settings-fog')
+    const syncFogBtn = () => {
+      fogBtn.textContent = this.game.fog.enabled ? 'Enabled' : 'Disabled'
+      fogBtn.classList.toggle('on', this.game.fog.enabled)
+    }
+    syncFogBtn()
+    fogBtn.onclick = () => {
+      this.game.fog.enabled = !this.game.fog.enabled
+      this.game.fog.dirty = true
+      syncFogBtn()
+    }
+
+    $('btn-quit').onclick = () => {
+      if (confirm('Quit this match and return to the main menu?')) location.reload()
+    }
   }
 
   toast(msg, warn = false) {
@@ -98,7 +144,12 @@ export class UI {
     actions.innerHTML = ''
 
     if (!selected.length) {
-      if (inspected && !inspected.dead) { this.renderResourcePanel(inspected); return }
+      if (inspected && !inspected.dead) {
+        if (inspected.kind === 'tower') this.renderTowerPanel(inspected)
+        else if (inspected.kind === 'treasure') this.renderTreasurePanel(inspected)
+        else this.renderResourcePanel(inspected)
+        return
+      }
       panel.innerHTML = `<div class="hint">
         <b>Drag-select</b> units &nbsp;·&nbsp; <b>Right-click</b> move / attack / gather / repair
         &nbsp;·&nbsp; <b>A + click</b> attack-move &nbsp;·&nbsp; <b>Space</b> jump to base
@@ -150,7 +201,29 @@ export class UI {
         ${progressHtml}
         <div class="sel-desc">${proto.desc || ''}</div>
         ${extra}
+        ${first.kind === 'unit' ? '<div class="ord-row" id="ord-row"></div>' : ''}
       </div>`
+
+    // Move/Attack/Patrol as small always-visible icon buttons beside the portrait,
+    // not in the scrollable action grid below — they used to compete for grid space
+    // with the build menu (up to 10 items for a worker), forcing a scroll on
+    // anything but the tallest screens. This guarantees they're always reachable.
+    if (first.kind === 'unit') {
+      const row = $('ord-row')
+      const orders = [
+        { mode: 'move', icon: '🏃', label: 'Move', desc: 'Click a spot to walk there.' },
+        { mode: 'attack', icon: '⚔', label: 'Attack', desc: 'Click an enemy to attack it, or ground to attack-move.' },
+        { mode: 'patrol', icon: '🔁', label: 'Patrol', desc: 'Click a spot to patrol back and forth, engaging enemies along the way.' },
+      ]
+      for (const o of orders) {
+        const b = document.createElement('button')
+        b.className = 'ordchip'
+        b.innerHTML = o.icon
+        this.attachTip(b, `<b>${o.label}</b><br><span class="tip-desc">${o.desc}</span>`)
+        b.onclick = () => { audio.click(); this.getInput().armOrder(o.mode) }
+        row.appendChild(b)
+      }
+    }
 
     // ---- action buttons ----
     const playerAge = ageOf(this.game, this.me)
@@ -191,22 +264,6 @@ export class UI {
             this.toast('Advancing to Age II…')
           }
         }
-        actions.appendChild(b)
-      }
-    }
-
-    if (first.kind === 'unit') {
-      // click-a-button, click-a-target order buttons — the same orders right-click and
-      // A+click already do, surfaced for anyone who doesn't know those gestures
-      const orders = [
-        { mode: 'move', icon: '🏃', label: 'Move', desc: 'Click a spot to walk there.' },
-        { mode: 'attack', icon: '⚔', label: 'Attack', desc: 'Click an enemy to attack it, or ground to attack-move.' },
-        { mode: 'patrol', icon: '🔁', label: 'Patrol', desc: 'Click a spot to patrol back and forth, engaging enemies along the way.' },
-      ]
-      for (const o of orders) {
-        const b = this.orderBtn(o.icon, o.label)
-        this.attachTip(b, `<b>${o.label}</b><br><span class="tip-desc">${o.desc}</span>`)
-        b.onclick = () => this.getInput().armOrder(o.mode)
         actions.appendChild(b)
       }
     }
@@ -270,14 +327,16 @@ export class UI {
     const isWood = e.rtype === 'wood'
     const name = isWood ? 'Forest' : 'Gold Deposit'
     const portrait = PORTRAITS[e.rtype] || ''
+    const infinite = !isFinite(e.maxAmount)
     const depleted = e.amount <= 0
-    const pct = Math.max(0, Math.round((e.amount / e.maxAmount) * 100))
+    const pct = infinite ? 100 : Math.max(0, Math.round((e.amount / e.maxAmount) * 100))
+    const amountStr = infinite ? '∞' : depleted ? 'Depleted' : `${Math.ceil(e.amount)} / ${e.maxAmount}`
     $('sel-panel').innerHTML = `
       <img class="portrait" src="${portrait}" alt="">
       <div class="sel-info">
         <div class="sel-name">${name}</div>
         <div class="sel-stats">
-          <span class="stat">${isWood ? '🪵' : '🪙'} ${depleted ? 'Depleted' : `${Math.ceil(e.amount)} / ${e.maxAmount}`}</span>
+          <span class="stat">${isWood ? '🪵' : '🪙'} ${amountStr}</span>
         </div>
         <div class="pbar"><div style="width:${pct}%"></div></div>
         <div class="sel-desc">${isWood
@@ -286,21 +345,42 @@ export class UI {
       </div>`
   }
 
+  // Read-only info panel for a neutral watchtower.
+  renderTowerPanel(e) {
+    const owned = e.owner >= 0
+    const ownerName = owned ? this.game.players[e.owner].name : 'Unclaimed'
+    const capturing = e.captureProgress > 0
+    const capPct = capturing ? Math.round((e.captureProgress / e.proto.captureTime) * 100) : 0
+    $('sel-panel').innerHTML = `
+      <img class="portrait" src="${PORTRAITS.watchtower || ''}" alt="">
+      <div class="sel-info">
+        <div class="sel-name">${e.proto.name}</div>
+        <div class="sel-stats">
+          <span class="stat">❤ ${Math.ceil(e.hp)}/${e.maxHp}</span>
+          <span class="stat" style="${owned ? `color:${hex(PLAYER_COLORS[e.owner])}` : ''}">${owned ? '🚩' : '⚪'} ${ownerName}</span>
+          ${owned ? `<span class="stat">🪙 +${e.proto.goldPerSec}/s</span>` : ''}
+        </div>
+        ${capturing ? `<div class="pbar"><div style="width:${capPct}%"></div></div><div class="sel-stats"><span class="stat warn">Capturing… ${capPct}%</span></div>` : ''}
+        <div class="sel-desc">${e.proto.desc}</div>
+      </div>`
+  }
+
+  // Read-only info panel for a treasure chest.
+  renderTreasurePanel(e) {
+    $('sel-panel').innerHTML = `
+      <img class="portrait" src="${PORTRAITS.treasure || ''}" alt="">
+      <div class="sel-info">
+        <div class="sel-name">${e.proto.name}</div>
+        <div class="sel-stats"><span class="stat">🪙 ${e.gold} gold</span></div>
+        <div class="sel-desc">${e.proto.desc}</div>
+      </div>`
+  }
+
   actionBtn(img, name, subHtml, disabled = false) {
     const b = document.createElement('button')
     b.className = 'action' + (disabled ? ' disabled' : '')
     b.innerHTML = `<img src="${img}" alt="" draggable="false"><span>${name}</span><small>${subHtml}</small>`
     if (!disabled) b.addEventListener('click', () => audio.click())
-    return b
-  }
-
-  // Icon-glyph variant of actionBtn for order-mode buttons (Move/Attack/Patrol)
-  // that have no per-item portrait to show.
-  orderBtn(icon, name) {
-    const b = document.createElement('button')
-    b.className = 'action ordbtn'
-    b.innerHTML = `<div class="ordicon">${icon}</div><span>${name}</span>`
-    b.addEventListener('click', () => audio.click())
     return b
   }
 
@@ -320,13 +400,14 @@ export class UI {
     ctx.fillStyle = '#4a6b3d'
     ctx.fillRect(0, 0, S, S)
     const k = S / MAP
-    for (const o of this.game.obstacles) {
+    const g = this.game
+    for (const o of g.obstacles) {
+      if (g.fog?.enabled && !isExplored(g, o.x, o.z)) continue
       ctx.fillStyle = '#8a8a88'
       ctx.beginPath()
       ctx.arc((o.x + MAP / 2) * k, (o.z + MAP / 2) * k, o.r * k, 0, 7)
       ctx.fill()
     }
-    const g = this.game
     each(g, (e) => {
       // hide fogged entities: enemy units need live sight, everything else once explored
       if (e.owner !== this.me) {
@@ -336,6 +417,12 @@ export class UI {
       if (e.kind === 'resource') {
         ctx.fillStyle = e.rtype === 'wood' ? (e.amount > 0 ? '#2e5424' : '#5a5646') : '#e8c447'
         ctx.fillRect(x - 1.5, y - 1.5, 3, 3)
+      } else if (e.kind === 'treasure') {
+        ctx.fillStyle = '#f0c04a'
+        ctx.fillRect(x - 2, y - 2, 4, 4)
+      } else if (e.kind === 'tower') {
+        ctx.fillStyle = e.owner >= 0 ? hex(PLAYER_COLORS[e.owner]) : '#9a9184'
+        ctx.beginPath(); ctx.arc(x, y, 3, 0, 7); ctx.fill()
       } else {
         ctx.fillStyle = hex(PLAYER_COLORS[e.owner])
         const s = e.kind === 'building' ? 5 : 2.5
@@ -426,17 +513,55 @@ export function homeScreen(onStart) {
     diffWrap.appendChild(b)
   }
 
+  const getMapSettings = setupMapSettings()
+
   $('btn-start').onclick = () => {
     el.style.display = 'none'
-    onStart({ mode: 'ai', aiCount, difficulty })
+    onStart({ mode: 'ai', aiCount, difficulty, mapSettings: getMapSettings() })
   }
 
-  setupOnlineTab(el, onStart)
+  setupOnlineTab(el, onStart, getMapSettings)
+}
+
+// ---- map settings: resource abundance + neutral feature toggles --------------
+// Shared by both Vs AI and Online-host — the online joiner receives whatever
+// the host chose via the 'start' message instead of picking their own.
+
+function setupMapSettings() {
+  const toggle = $('btn-map-toggle')
+  const body = $('map-settings-body')
+  const chevron = $('map-toggle-chevron')
+  toggle.onclick = () => {
+    const open = body.classList.toggle('open')
+    chevron.textContent = open ? '▴' : '▾'
+  }
+
+  let abundance = 'normal'
+  const abWrap = $('opt-abundance')
+  abWrap.innerHTML = ''
+  for (const key of Object.keys(RESOURCE_ABUNDANCE)) {
+    const b = document.createElement('button')
+    b.className = 'opt' + (key === abundance ? ' sel' : '')
+    b.textContent = RESOURCE_ABUNDANCE[key].name
+    b.onclick = () => {
+      abundance = key
+      abWrap.querySelectorAll('.opt').forEach((x) => x.classList.remove('sel'))
+      b.classList.add('sel')
+    }
+    abWrap.appendChild(b)
+  }
+
+  let towers = true, treasure = true
+  const towersBtn = $('opt-towers'), treasureBtn = $('opt-treasure')
+  towersBtn.onclick = () => { towers = !towers; towersBtn.classList.toggle('off', !towers) }
+  treasureBtn.onclick = () => { treasure = !treasure; treasureBtn.classList.toggle('off', !treasure) }
+
+  return () => ({ resourceAbundance: abundance, towers, treasure })
 }
 
 // ---- online lobby: mode tabs + host/join flow --------------------------------
 
-function setupOnlineTab(homeEl, onStart) {
+function setupOnlineTab(homeEl, onStart, getMapSettings) {
   const tabAi = $('tab-ai'), tabOnline = $('tab-online')
   const cardAi = $('card-ai'), cardOnline = $('card-online')
   const choice = $('online-choice'), joinForm = $('join-form'), status = $('lobby-status')
@@ -471,7 +596,7 @@ function setupOnlineTab(homeEl, onStart) {
     showStatus('Connecting to relay…')
     net = new NetClient(relayInput.value.trim())
     net.connect().then(() => {
-      net.host()
+      net.host(getMapSettings())
       net.onMessage = (msg) => {
         if (msg.type === 'hosted') {
           $('lobby-code').textContent = msg.code
@@ -479,7 +604,7 @@ function setupOnlineTab(homeEl, onStart) {
           showStatus('Share this code — waiting for your rival to join…')
         } else if (msg.type === 'start') {
           homeEl.style.display = 'none'
-          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot })
+          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings })
         }
       }
       net.onClose = () => showStatus('Connection lost. Try again.')
@@ -498,7 +623,7 @@ function setupOnlineTab(homeEl, onStart) {
         else if (msg.type === 'error') showStatus(msg.reason || 'Could not join that room.')
         else if (msg.type === 'start') {
           homeEl.style.display = 'none'
-          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot })
+          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings })
         }
       }
       net.onClose = () => showStatus('Connection lost. Try again.')

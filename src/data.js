@@ -2,7 +2,11 @@
 // One medieval civilization, two Ages, classic wood + gold economy.
 // Costs: { w: wood, g: gold, supply }
 
-export const SUPPLY_CAP = 80
+// 200 supply benchmarked at ~83 units/player (4-player FFA, ~330 units total):
+// sim tick cost stays ~18-20% of the 33ms frame budget, comfortably safe even
+// stacked with rendering. Headroom holds up to ~100/player before it's worth
+// revisiting (separation() is the O(units^2) cost driver at real scale).
+export const SUPPLY_CAP = 200
 export const AGE_UP_COST = { w: 250, g: 175 }
 export const AGE_UP_TIME = 45
 
@@ -61,8 +65,8 @@ export const BUILDINGS = {
   farm: {
     name: 'Farm', kind: 'supply', age: 1,
     cost: { w: 45 }, buildTime: 14,
-    hp: 250, radius: 2.6, supply: 6,
-    desc: '+6 supply. Golden wheat, tended by nobody in particular.',
+    hp: 250, radius: 2.6, supply: 16,
+    desc: '+16 supply. Golden wheat, tended by nobody in particular.',
   },
   barracks: {
     name: 'Barracks', kind: 'production', age: 1,
@@ -102,20 +106,42 @@ export const BUILDINGS = {
 // Build menu shown to villagers (order matters)
 export const BUILD_MENU = ['farm', 'storage', 'barracks', 'archery', 'watchtower', 'temple', 'towncenter']
 
+// Neutral map features — not owned by anyone at game start.
+export const NEUTRAL_TOWER = {
+  name: 'Watchtower', radius: 3.2,
+  hp: 700, captureRadius: 11, captureTime: 12, goldPerSec: 1.4,
+  desc: 'Neutral. Hold ground nearby uncontested for a while to capture it — a captured tower generates gold for its owner until someone else takes it.',
+}
+export const TREASURE = {
+  name: 'Treasure Chest', radius: 1.1, pickupRadius: 1.7, goldMin: 90, goldMax: 190,
+  desc: 'A one-time gold reward for whichever unit reaches it first.',
+}
+
+// Pre-match map generation options (home screen "Map Settings")
+export const RESOURCE_ABUNDANCE = {
+  low: { name: 'Scarce', mul: 0.6 },
+  normal: { name: 'Normal', mul: 1 },
+  high: { name: 'Abundant', mul: 1.8 },
+  infinite: { name: 'Infinite', mul: Infinity },
+}
+
 // AI difficulty presets
+// workers/armyCap scaled up alongside SUPPLY_CAP (was tuned for the old 80 cap —
+// left as-is, the AI would cap out around 50 supply and never use the new
+// headroom, making higher difficulties trivial against a big player army).
 export const DIFFICULTY = {
   easy: {
-    name: 'Easy', workers: 10, armyCap: 10,
+    name: 'Easy', workers: 25, armyCap: 25,
     waveFirst: 330, waveEvery: 150, waveStart: 6, waveGrow: 3,
     incomeMul: 0.8, ageAt: 420,
   },
   normal: {
-    name: 'Normal', workers: 15, armyCap: 18,
+    name: 'Normal', workers: 35, armyCap: 45,
     waveFirst: 250, waveEvery: 115, waveStart: 8, waveGrow: 5,
     incomeMul: 1.0, ageAt: 330,
   },
   hard: {
-    name: 'Hard', workers: 20, armyCap: 28,
+    name: 'Hard', workers: 45, armyCap: 65,
     waveFirst: 190, waveEvery: 90, waveStart: 10, waveGrow: 7,
     incomeMul: 1.3, ageAt: 260,
   },
@@ -144,6 +170,7 @@ export const MODELS = {
     prop: ['Barrel', 'Crate_Stack1', 'Logs'],
     windmill: ['Windmill_FirstAge'],
   },
+  treasure: ['Crate_Stack1'],
 }
 
 // Building footprint (world units across) each model is scaled to

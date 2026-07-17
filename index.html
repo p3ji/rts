@@ -7,6 +7,18 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
     html, body { height: 100%; overflow: hidden; background: #1a2415; font-family: 'Segoe UI', system-ui, sans-serif; color: #f0ead8; }
+    :root {
+      /* Responsive HUD sizing: scales down on shorter viewports (e.g. a MacBook
+         browser window) so the action grid gets two full rows instead of one —
+         previously a worker's Move/Attack/Patrol + 7 build buttons needed 3 rows
+         but only ~1 fit, forcing a scroll just to see build options. */
+      --hud-h: clamp(152px, 25vh, 196px);
+      --btn-w: clamp(104px, 10.5vw, 158px);
+      --btn-h: calc((var(--hud-h) - 40px) / 2);
+      --img-h: calc(var(--btn-h) * 0.54);
+      --portrait-w: clamp(150px, 18vw, 220px);
+      --portrait-h: clamp(96px, 14vh, 140px);
+    }
     #game { position: fixed; inset: 0; display: block; z-index: 0; }
     button { font-family: inherit; }
 
@@ -23,21 +35,56 @@
     #topbar .spacer { flex: 1; }
     #age-ind { color: #e8c88a; font-weight: 600; font-size: 15px; }
     #clock { opacity: 0.85; font-variant-numeric: tabular-nums; font-weight: 600; }
-    #btn-mute, #btn-army {
+    #btn-mute, #btn-army, #btn-settings {
       pointer-events: auto; background: transparent; border: none; color: #e8dcc0;
       font-size: 18px; cursor: pointer; opacity: 0.85; padding: 4px;
     }
-    #btn-mute:hover, #btn-army:hover { opacity: 1; }
+    #btn-mute:hover, #btn-army:hover, #btn-settings:hover { opacity: 1; }
+
+    /* ---- settings modal ---- */
+    #settings-modal {
+      position: fixed; inset: 0; z-index: 15; display: none; align-items: center; justify-content: center;
+      background: rgba(10,8,4,0.6);
+    }
+    #settings-modal.show { display: flex; }
+    .settings-card {
+      background: rgba(30,24,13,0.97); border: 2px solid #6a583a; border-radius: 14px;
+      padding: 26px 30px; display: flex; flex-direction: column; gap: 16px; min-width: 360px;
+      box-shadow: 0 14px 44px rgba(0,0,0,0.5);
+    }
+    .settings-card h2 { font-size: 20px; color: #ffe9b0; letter-spacing: 1px; }
+    .settings-row { display: flex; flex-direction: column; gap: 7px; }
+    .settings-row label { font-size: 13px; color: #a89a78; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    .settings-row-inline { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .settings-btn {
+      background: #241d0f; color: #e8dcc0; border: 1px solid #5c4c2c; border-radius: 8px;
+      padding: 10px 14px; font-size: 14px; font-weight: 600; cursor: pointer;
+    }
+    .settings-btn:hover { border-color: #a8854a; }
+    .settings-btn.on { background: #4a3a1c; border-color: #d8b05c; color: #ffe9b0; }
+    .settings-btn.danger:hover { border-color: #c0392b; color: #ffb0a6; }
+    #settings-modal input[type="range"] { width: 100%; accent-color: #d8a52e; }
+    #btn-settings-close {
+      padding: 11px; background: linear-gradient(to bottom, #d8a52e, #b8862a); color: #241a06;
+      border: none; border-radius: 9px; font-size: 15px; font-weight: 800; cursor: pointer;
+    }
+
+    #pause-banner {
+      position: fixed; top: 90px; left: 50%; transform: translateX(-50%); z-index: 9;
+      display: none; background: rgba(20,16,9,0.92); border: 1px solid #8a6f3e; border-radius: 10px;
+      padding: 10px 26px; font-size: 18px; font-weight: 700; letter-spacing: 2px; color: #ffe9b0;
+    }
+    #pause-banner.show { display: block; }
 
     /* ---- bottom HUD ---- */
     #hud {
-      position: fixed; left: 0; right: 0; bottom: 0; height: 196px;
+      position: fixed; left: 0; right: 0; bottom: 0; height: var(--hud-h);
       display: flex; gap: 12px; padding: 12px;
       background: linear-gradient(to top, rgba(26,21,12,0.96), rgba(26,21,12,0.8));
       border-top: 2px solid #59492e; z-index: 5;
     }
-    #sel-panel { display: flex; gap: 12px; width: 430px; min-width: 430px; }
-    #sel-panel .portrait { width: 220px; height: 140px; object-fit: cover; border-radius: 8px; border: 1px solid #6a583a; align-self: center; }
+    #sel-panel { display: flex; gap: 12px; width: clamp(300px, 34vw, 430px); min-width: clamp(300px, 34vw, 430px); }
+    #sel-panel .portrait { width: var(--portrait-w); height: var(--portrait-h); object-fit: cover; border-radius: 8px; border: 1px solid #6a583a; align-self: center; }
     .sel-info { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
     .sel-name { font-weight: 700; font-size: 17px; }
     .sel-stats { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13.5px; color: #cdbfa0; }
@@ -54,8 +101,8 @@
     /* ---- action buttons ---- */
     #actions { flex: 1; display: flex; flex-wrap: wrap; gap: 10px; align-content: flex-start; overflow-y: auto; padding-right: 4px; }
     .action {
-      width: 158px; height: 170px; background: #2a2415; border: 1px solid #5c4c2c; border-radius: 8px;
-      color: #f0ead8; cursor: pointer; display: flex; flex-direction: column; align-items: center; padding: 7px; gap: 5px;
+      width: var(--btn-w); height: var(--btn-h); background: #2a2415; border: 1px solid #5c4c2c; border-radius: 8px;
+      color: #f0ead8; cursor: pointer; display: flex; flex-direction: column; align-items: center; padding: 7px; gap: 4px;
       transition: border-color 0.1s, background 0.1s, transform 0.08s;
     }
     .action:hover { border-color: #d8b05c; background: #362e1a; transform: translateY(-2px); }
@@ -63,16 +110,22 @@
     .action.disabled { opacity: 0.42; cursor: default; }
     .action.disabled:hover { border-color: #5c4c2c; background: #2a2415; transform: none; }
     .action.ageup { border-color: #b08c3c; background: #33290f; }
-    .action img { width: 144px; height: 92px; object-fit: cover; border-radius: 5px; pointer-events: none; background: #223018; }
-    .action span { font-size: 14px; font-weight: 700; line-height: 1.15; text-align: center; }
-    .action small { font-size: 13px; color: #cdbfa0; display: flex; gap: 8px; }
+    .action img { width: 100%; height: var(--img-h); object-fit: cover; border-radius: 5px; pointer-events: none; background: #223018; }
+    .action span { font-size: clamp(12px, 1.1vh, 14px); font-weight: 700; line-height: 1.15; text-align: center; }
+    .action small { font-size: clamp(11px, 1vh, 13px); color: #cdbfa0; display: flex; gap: 8px; }
     .c-w { color: #cf9c5e; } .c-g { color: #f0c04a; } .c-p { color: #d1c4a4; }
 
-    .ordbtn { width: 84px; height: 170px; justify-content: center; }
-    .ordbtn .ordicon {
-      width: 100%; height: 92px; display: flex; align-items: center; justify-content: center;
-      font-size: 40px; background: #223018; border-radius: 5px;
+    /* Move/Attack/Patrol quick-order icons — small, always visible beside the
+       portrait, so they never compete with the build menu for scrollable grid
+       space (that used to force a scroll for any worker with >1 row of options). */
+    .ord-row { display: flex; gap: 6px; margin-top: 2px; }
+    .ordchip {
+      width: 34px; height: 34px; border-radius: 6px; font-size: 17px;
+      background: #2a2415; border: 1px solid #5c4c2c; color: #f0ead8; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: border-color 0.1s, background 0.1s;
     }
+    .ordchip:hover { border-color: #d8b05c; background: #362e1a; }
 
     .queue { width: 100%; font-size: 14px; color: #cdbfa0; padding: 6px 2px; display: flex; flex-direction: column; gap: 5px; }
     .queue-line b { color: #f0ead8; }
@@ -80,7 +133,7 @@
 
     /* production queue strip — pinned above the HUD, never clipped by its fixed height */
     #queue-strip {
-      position: fixed; left: 0; right: 0; bottom: 196px; z-index: 5;
+      position: fixed; left: 0; right: 0; bottom: var(--hud-h); z-index: 5;
       display: none; align-items: center; gap: 10px; padding: 8px 16px;
       background: linear-gradient(to top, rgba(26,21,12,0.94), rgba(26,21,12,0.55));
       border-top: 1px solid #4a3d26;
@@ -106,7 +159,11 @@
     }
     .qprog { position: absolute; left: 0; bottom: 0; height: 3px; background: #f0c04a; }
 
-    #minimap { width: 172px; height: 172px; min-width: 172px; border: 2px solid #5c4c2c; border-radius: 8px; cursor: pointer; }
+    #minimap {
+      width: clamp(110px, calc(var(--hud-h) - 24px), 172px); height: clamp(110px, calc(var(--hud-h) - 24px), 172px);
+      min-width: clamp(110px, calc(var(--hud-h) - 24px), 172px);
+      border: 2px solid #5c4c2c; border-radius: 8px; cursor: pointer;
+    }
 
     /* ---- tooltip ---- */
     #tooltip {
@@ -171,6 +228,18 @@
     }
     .opt:hover { border-color: #a8854a; }
     .opt.sel { background: #4a3a1c; border-color: #d8b05c; color: #ffe9b0; }
+    .opt.off { opacity: 0.55; }
+
+    /* ---- collapsible map settings (shared by Vs AI and Online host) ---- */
+    #card-map-settings { padding: 18px 34px; gap: 14px; }
+    .map-toggle {
+      background: transparent; border: none; color: #cdbfa0; font-size: 14px; font-weight: 700;
+      letter-spacing: 1px; text-transform: uppercase; cursor: pointer; text-align: left;
+      display: flex; align-items: center; justify-content: space-between; padding: 0;
+    }
+    .map-toggle:hover { color: #ffe9b0; }
+    #map-settings-body { display: none; flex-direction: column; gap: 16px; margin-top: 4px; }
+    #map-settings-body.open { display: flex; }
     #btn-start {
       padding: 14px; background: linear-gradient(to bottom, #d8a52e, #b8862a); color: #241a06;
       border: none; border-radius: 9px; font-size: 19px; font-weight: 800; letter-spacing: 1px; cursor: pointer;
@@ -248,6 +317,36 @@
     <div id="clock">0:00</div>
     <button id="btn-army" title="Select all army units">⚔</button>
     <button id="btn-mute" title="Mute/unmute">🔊</button>
+    <button id="btn-settings" title="Settings">⚙</button>
+  </div>
+
+  <div id="pause-banner">⏸ PAUSED</div>
+
+  <div id="settings-modal">
+    <div class="settings-card">
+      <h2>Settings</h2>
+      <div class="settings-row">
+        <button class="settings-btn" id="btn-pause">⏸ Pause</button>
+      </div>
+      <div class="settings-row">
+        <label>Music volume</label>
+        <input type="range" id="vol-music" min="0" max="100" value="35">
+      </div>
+      <div class="settings-row">
+        <label>Sound effects volume</label>
+        <input type="range" id="vol-sfx" min="0" max="100" value="80">
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-inline">
+          <label style="margin:0;">Fog of war</label>
+          <button class="settings-btn" id="btn-settings-fog">Enabled</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <button class="settings-btn danger" id="btn-quit">Quit to Menu</button>
+      </div>
+      <button id="btn-settings-close">Close</button>
+    </div>
   </div>
 
   <div id="queue-strip"><span class="qlabel">Producing</span><div class="qchips" id="qchips-row"></div></div>
@@ -308,6 +407,22 @@
         <div class="lobby-code" id="lobby-code" style="display:none;"></div>
         <div class="lobby-msg" id="lobby-msg">Connecting…</div>
         <button id="btn-lobby-cancel">Cancel</button>
+      </div>
+    </div>
+
+    <div class="setup-card" id="card-map-settings">
+      <button id="btn-map-toggle" class="map-toggle">🗺 Map Settings <span id="map-toggle-chevron">▾</span></button>
+      <div id="map-settings-body">
+        <div class="setup-row">
+          <label>Resources</label>
+          <div class="optrow" id="opt-abundance"></div>
+        </div>
+        <div class="setup-row">
+          <div class="online-row">
+            <button class="opt" id="opt-towers">🏰 Capturable Towers</button>
+            <button class="opt" id="opt-treasure">💰 Treasure Chests</button>
+          </div>
+        </div>
       </div>
     </div>
 

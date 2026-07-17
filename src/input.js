@@ -49,7 +49,10 @@ export class Input {
     if (!down) return
     if (k === 'enter') { this.openChat(); e.preventDefault(); return }
     if (k === 'a') this.attackModifier = true
-    if (k === 'escape') { this.stopPlacing(); this.attackModifier = false; this.orderMode = null; this.ui.refresh(this.selected) }
+    if (k === 'escape') {
+      this.stopPlacing(); this.attackModifier = false; this.orderMode = null; this.ui.refresh(this.selected)
+      document.getElementById('settings-modal').classList.remove('show')
+    }
     if (/^[0-9]$/.test(k)) {
       e.preventDefault() // stop the browser from treating Ctrl+digit as a tab-switch shortcut
       if (e.ctrlKey) {
@@ -134,7 +137,9 @@ export class Input {
       issue(g, { t: 'move', p: me, units: ids(units), x: pt.x, z: pt.z, am: false })
       this.r.orderFx(pt.x, pt.z, PLAYER_COLORS[me])
     } else if (mode === 'attack') {
-      if (target && !target.dead && target.owner !== undefined && target.owner >= 0 && target.owner !== me) {
+      const attackable = target && !target.dead && target.kind !== 'tower' && target.kind !== 'treasure' &&
+        target.owner !== undefined && target.owner >= 0 && target.owner !== me
+      if (attackable) {
         issue(g, { t: 'attack', p: me, units: ids(units), target: target.id })
         this.r.orderFx(target.x, target.z, 0xe0483a)
       } else {
@@ -241,6 +246,7 @@ export class Input {
     const ent = this.r.pickEntity(n.x, n.y)
     if (!ent) { el.style.cursor = 'default'; return }
     if (ent.kind === 'resource') { el.style.cursor = units.some((u) => u.proto.worker) ? 'pointer' : 'default'; return }
+    if (ent.kind === 'tower' || ent.kind === 'treasure') { el.style.cursor = 'pointer'; return } // not attackable
     if (ent.owner !== this.game.localPlayer) { el.style.cursor = units.length ? 'crosshair' : 'default'; return }
     el.style.cursor = 'pointer'
   }
@@ -258,7 +264,7 @@ export class Input {
   clickSelect(n, additive) {
     const ent = this.r.pickEntity(n.x, n.y)
     if (!additive) this.clearSelection()
-    if (ent && ent.kind === 'resource') {
+    if (ent && (ent.kind === 'resource' || ent.kind === 'tower' || ent.kind === 'treasure')) {
       this.inspected = ent
       ent.selected = true
     } else {
@@ -322,6 +328,12 @@ export class Input {
         const rest = units.filter((u) => !u.proto.worker)
         if (rest.length) issue(g, { t: 'move', p: me, units: ids(rest), x: target.x, z: target.z, am: false })
         this.r.orderFx(target.x, target.z, target.rtype === 'wood' ? 0x4a8f3a : 0xe8c447)
+        return
+      }
+      if (target.kind === 'tower' || target.kind === 'treasure') {
+        // not attackable — capture/pickup is purely presence-based, so just walk there
+        issue(g, { t: 'move', p: me, units: ids(units), x: target.x, z: target.z, am: false })
+        this.r.orderFx(target.x, target.z, myColor)
         return
       }
       if (target.owner === me) {

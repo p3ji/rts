@@ -45,6 +45,19 @@ class AudioEngine {
   }
   toggleMuted() { this.setMuted(!this.prefs.muted); return this.prefs.muted }
 
+  get sfxVolume() { return this.prefs.sfx }
+  get musicVolume() { return this.prefs.music }
+  setSfxVolume(v) {
+    this.prefs.sfx = v
+    savePrefs(this.prefs)
+    if (this.sfxGain) this.sfxGain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05)
+  }
+  setMusicVolume(v) {
+    this.prefs.music = v
+    savePrefs(this.prefs)
+    if (this.musicGain) this.musicGain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05)
+  }
+
   noiseBuffer() {
     if (this._noiseBuffer) return this._noiseBuffer
     const ctx = this.ensure()

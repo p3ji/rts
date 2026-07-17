@@ -1,4 +1,6 @@
-import { UNITS, BUILDINGS, SUPPLY_CAP, PLAYER_COLORS, PLAYER_NAMES, DIFFICULTY } from './data.js'
+import { UNITS, BUILDINGS, SUPPLY_CAP, PLAYER_COLORS, PLAYER_NAMES, DIFFICULTY, NEUTRAL_TOWER, TREASURE, RESOURCE_ABUNDANCE } from './data.js'
+
+export const DEFAULT_MAP_SETTINGS = { resourceAbundance: 'normal', towers: true, treasure: true }
 
 export const MAP = 220 // world is a MAP x MAP square centered on origin
 
@@ -19,7 +21,7 @@ export function mulberry32(seed) {
   }
 }
 
-export function createGame({ aiCount = 1, humanCount = 1, difficulty = 'normal', seed = null } = {}) {
+export function createGame({ aiCount = 1, humanCount = 1, difficulty = 'normal', seed = null, mapSettings = null } = {}) {
   const rngSeed = seed ?? Math.floor(Math.random() * 2 ** 31)
   const rnd = mulberry32(rngSeed)
   const diff = DIFFICULTY[difficulty] || DIFFICULTY.normal
@@ -29,7 +31,9 @@ export function createGame({ aiCount = 1, humanCount = 1, difficulty = 'normal',
     tick: 0, // integer simulation step counter (drives lockstep + command timing)
     nextId: 1, // per-game entity id counter (kept in state so ids are deterministic)
     over: null, // 'win' | 'loss'
+    paused: false,
     seed: rngSeed,
+    mapSettings: { ...DEFAULT_MAP_SETTINGS, ...mapSettings },
     // Simulation RNG — a separate, reproducible stream from map generation so the
     // number of map-gen calls can change without shifting in-game randomness.
     // Both networked clients derive the identical stream from the shared seed.
@@ -143,6 +147,9 @@ function generateMap(g, rnd, spawns) {
   const lim = MAP / 2 - 8
   const nearSpawn = (x, z, r) => spawns.some(([sx, sz]) => Math.hypot(x - sx, z - sz) < r)
   const nearObstacle = (x, z, pad) => g.obstacles.some((o) => Math.hypot(x - o.x, z - o.z) < o.r + pad)
+  const abundanceMul = (RESOURCE_ABUNDANCE[g.mapSettings.resourceAbundance] ?? RESOURCE_ABUNDANCE.normal).mul
+  const featurePositions = [] // towers + treasure placed so far, just for spacing them out
+  const nearFeature = (x, z, pad) => featurePositions.some((f) => Math.hypot(x - f.x, z - f.z) < pad)
 
   // mountains — impassable terrain features
   const nMountains = 5 + Math.floor(rnd() * 4)
@@ -172,7 +179,7 @@ function generateMap(g, rnd, spawns) {
       const a = rnd() * Math.PI * 2, rr = k === 0 ? 0 : 4.5 + rnd() * 4
       const tx = x + Math.cos(a) * rr, tz = z + Math.sin(a) * rr
       if (Math.abs(tx) > lim || Math.abs(tz) > lim || nearObstacle(tx, tz, 4)) continue
-      spawnResource(g, 'wood', tx, tz, 350 + Math.floor(rnd() * 100), { pine, rot: rnd() * Math.PI * 2 })
+      spawnResource(g, 'wood', tx, tz, (350 + Math.floor(rnd() * 100)) * abundanceMul, { pine, rot: rnd() * Math.PI * 2 })
     }
   }
 
@@ -186,8 +193,8 @@ function generateMap(g, rnd, spawns) {
       tries++
     } while ((nearSpawn(x, z, 38) || nearObstacle(x, z, 8)) && tries < 24)
     if (tries >= 24) continue
-    spawnResource(g, 'gold', x, z, 1100, { variant: Math.floor(rnd() * 3), rot: rnd() * Math.PI * 2 })
-    spawnResource(g, 'gold', x + 4 + rnd() * 2, z + (rnd() * 4 - 2), 1100, { variant: Math.floor(rnd() * 3), rot: rnd() * Math.PI * 2 })
+    spawnResource(g, 'gold', x, z, 1100 * abundanceMul, { variant: Math.floor(rnd() * 3), rot: rnd() * Math.PI * 2 })
+    spawnResource(g, 'gold', x + 4 + rnd() * 2, z + (rnd() * 4 - 2), 1100 * abundanceMul, { variant: Math.floor(rnd() * 3), rot: rnd() * Math.PI * 2 })
   }
 
   // decorative rocks and props (non-blocking)
@@ -205,9 +212,43 @@ function generateMap(g, rnd, spawns) {
       scale: model === 'windmill' ? 1 : 0.6 + rnd() * 0.7,
     })
   }
+
+  // neutral capturable watchtowers — passive gold/sec for whoever holds them
+  if (g.mapSettings.towers) {
+    const nTowers = 3 + Math.floor(rnd() * 2)
+    for (let i = 0; i < nTowers; i++) {
+      let x, z, tries = 0
+      do {
+        x = (rnd() * 2 - 1) * lim * 0.75
+        z = (rnd() * 2 - 1) * lim * 0.75
+        tries++
+      } while ((nearSpawn(x, z, 45) || nearObstacle(x, z, 10) || nearFeature(x, z, 40)) && tries < 30)
+      if (tries >= 30) continue
+      spawnNeutralTower(g, x, z)
+      featurePositions.push({ x, z })
+    }
+  }
+
+  // treasure chests — one-time gold pickup for whoever reaches them first
+  if (g.mapSettings.treasure) {
+    const nTreasure = 4 + Math.floor(rnd() * 3)
+    for (let i = 0; i < nTreasure; i++) {
+      let x, z, tries = 0
+      do {
+        x = (rnd() * 2 - 1) * lim
+        z = (rnd() * 2 - 1) * lim
+        tries++
+      } while ((nearSpawn(x, z, 30) || nearObstacle(x, z, 6) || nearFeature(x, z, 22)) && tries < 30)
+      if (tries >= 30) continue
+      const gold = TREASURE.goldMin + Math.floor(rnd() * (TREASURE.goldMax - TREASURE.goldMin))
+      spawnTreasure(g, x, z, gold)
+      featurePositions.push({ x, z })
+    }
+  }
 }
 
 function setupBase(g, owner, x, z, rnd) {
+  const abundanceMul = (RESOURCE_ABUNDANCE[g.mapSettings.resourceAbundance] ?? RESOURCE_ABUNDANCE.normal).mul
   const th = spawnBuilding(g, owner, 'towncenter', x, z, true)
   const toward = Math.atan2(-z, -x) // toward map center
   th.rally = { x: x + Math.cos(toward) * 9, z: z + Math.sin(toward) * 9 }
@@ -217,12 +258,12 @@ function setupBase(g, owner, x, z, rnd) {
   for (let i = 0; i < 4; i++) {
     const a = back + (i - 1.5) * 0.38
     const r = 13 + (i % 2) * 3
-    spawnResource(g, 'wood', x + Math.cos(a) * r, z + Math.sin(a) * r, 420, { pine: i % 2 === 0, rot: rnd() * Math.PI * 2 })
+    spawnResource(g, 'wood', x + Math.cos(a) * r, z + Math.sin(a) * r, 420 * abundanceMul, { pine: i % 2 === 0, rot: rnd() * Math.PI * 2 })
   }
   // two gold piles flanking
   for (const s of [-1, 1]) {
     const a = back + s * 1.15
-    spawnResource(g, 'gold', x + Math.cos(a) * 12, z + Math.sin(a) * 12, 1000, { variant: Math.floor(rnd() * 3), rot: rnd() * Math.PI * 2 })
+    spawnResource(g, 'gold', x + Math.cos(a) * 12, z + Math.sin(a) * 12, 1000 * abundanceMul, { variant: Math.floor(rnd() * 3), rot: rnd() * Math.PI * 2 })
   }
   // starting villagers
   for (let i = 0; i < 4; i++) {
@@ -274,6 +315,34 @@ export function spawnResource(g, rtype, x, z, amount, extra = {}) {
     pine: !!extra.pine, variant: extra.variant ?? 0, rot: extra.rot ?? 0,
     dead: false, depletedVisual: false,
     proto: { name: rtype === 'wood' ? 'Forest' : 'Gold Deposit', radius: rtype === 'wood' ? 2.3 : 1.7 },
+  }
+  g.entities.set(e.id, e)
+  g.events.push({ type: 'spawn', id: e.id })
+  return e
+}
+
+// A neutral map structure: owner starts at -1 (unclaimed). Any single player
+// holding uncontested ground nearby for captureTime seconds claims it and
+// starts earning goldPerSec; a rival can always take it back the same way.
+export function spawnNeutralTower(g, x, z) {
+  const e = {
+    id: g.nextId++, kind: 'tower', protoId: 'neutraltower', proto: NEUTRAL_TOWER,
+    x, z, rot: 0,
+    hp: NEUTRAL_TOWER.hp, maxHp: NEUTRAL_TOWER.hp, lastHit: -99,
+    owner: -1, captureProgress: 0,
+    dead: false,
+  }
+  g.entities.set(e.id, e)
+  g.events.push({ type: 'spawn', id: e.id })
+  return e
+}
+
+// A one-time gold pickup: whichever unit reaches it first claims it for their owner.
+export function spawnTreasure(g, x, z, gold) {
+  const e = {
+    id: g.nextId++, kind: 'treasure', protoId: 'treasure', proto: TREASURE,
+    x, z, rot: 0, gold,
+    dead: false,
   }
   g.entities.set(e.id, e)
   g.events.push({ type: 'spawn', id: e.id })

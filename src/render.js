@@ -13,6 +13,7 @@ export async function loadAssets(onProgress) {
   for (const pair of Object.values(MODELS.buildings)) pair.forEach((n) => names.add(n))
   for (const list of Object.values(MODELS.resources)) list.forEach((n) => names.add(n))
   for (const list of Object.values(MODELS.scenery)) list.forEach((n) => names.add(n))
+  MODELS.treasure.forEach((n) => names.add(n))
   const list = [...names]
   const loader = new GLTFLoader()
   let done = 0
@@ -92,12 +93,14 @@ export function generatePortraits() {
   }
   shoot(modelInstance(MODELS.resources.tree[0], 2.3 * 2.6), 'wood')
   shoot(modelInstance(MODELS.resources.gold[0], 1.7 * 2.3), 'gold')
+  shoot(modelInstance(MODELS.treasure[0], 1.1 * 2.6), 'treasure')
   rt.dispose()
 }
 
 // ---- boxy Wobbleton-style people ---------------------------------------------------
 
 const SKIN = 0xf7d9b8
+const NEUTRAL_COLOR = 0x9a9184 // banner/ring color for unclaimed neutral map features
 let faceTex = null
 function getFaceTexture() {
   if (faceTex) return faceTex
@@ -346,12 +349,18 @@ export class Renderer {
 
   buildScenery() {
     const g = this.game
+    // Scenery isn't tracked in this.meshes/g.entities, so it never went through
+    // entityVisible()'s fog gating — mountains/rocks/windmills were fully visible
+    // (and mountains showed on the minimap) even in never-explored territory.
+    // Track {grp,x,z} here so sync() can hide/reveal them same as real entities.
+    this.scenery = []
     for (const o of g.obstacles) {
       const name = MODELS.scenery.mountain[o.variant % MODELS.scenery.mountain.length]
       const m = modelInstance(name, o.r * 2.4)
       m.position.set(o.x, 0, o.z)
       m.rotation.y = o.rot
       this.scene.add(m)
+      this.scenery.push({ grp: m, x: o.x, z: o.z })
     }
     for (const d of g.decor) {
       const list = MODELS.scenery[d.model]
@@ -361,6 +370,7 @@ export class Renderer {
       m.position.set(d.x, 0, d.z)
       m.rotation.y = d.rot
       this.scene.add(m)
+      this.scenery.push({ grp: m, x: d.x, z: d.z })
     }
   }
 
@@ -437,6 +447,14 @@ export class Renderer {
         this.shotFx(ev)
       } else if (ev.type === 'gather' && this.isNearCamera(ev.x, ev.z)) {
         if (ev.rtype === 'wood') audio.chop(); else audio.mine()
+      } else if (ev.type === 'towerCaptured') {
+        const e = g.entities.get(ev.id)
+        if (e) {
+          this.rebuildMesh(e)
+          if (this.isNearCamera(e.x, e.z)) audio.buildComplete()
+        }
+      } else if (ev.type === 'treasureFound' && ev.owner === g.localPlayer) {
+        audio.buildComplete()
       }
     }
 
@@ -444,7 +462,14 @@ export class Renderer {
     const fog = g.fog
     if (fog) {
       this.fogMesh.visible = fog.enabled
-      if (fog.enabled && fog.dirty) { this.updateFogTexture(); fog.dirty = false }
+      const wasDirty = fog.dirty
+      if (fog.enabled && wasDirty) { this.updateFogTexture(); fog.dirty = false }
+      // scenery (mountains/rocks/windmills) persists-once-explored, same as
+      // resources — only recheck while fog is actively changing (dirty) or just
+      // got toggled off, not every single frame, since scenery never moves.
+      if (wasDirty || !fog.enabled) {
+        for (const s of this.scenery) s.grp.visible = !fog.enabled || isExplored(g, s.x, s.z)
+      }
     }
 
     const t = performance.now() / 1000
@@ -482,6 +507,14 @@ export class Renderer {
         if (e.selected) ud.selRing.material.opacity = 0.75 + Math.sin(t * 5) * 0.2
       }
       if (ud.flag) ud.flag.rotation.y = Math.sin(t * 1.6 + id) * 0.25
+      if (ud.capRing) {
+        const capturing = e.captureProgress > 0
+        ud.capRing.visible = capturing
+        if (capturing) {
+          const frac = e.captureProgress / e.proto.captureTime
+          ud.capRing.material.opacity = 0.4 + frac * 0.5 + Math.sin(t * 6) * 0.1
+        }
+      }
     }
 
     const now = performance.now()
@@ -552,6 +585,36 @@ export class Renderer {
       grp.add(pole)
       const flag = box(grp, 0.9, 0.55, 0.04, lamb(color), e.proto.radius * 0.75 + 0.45, 2.35, e.proto.radius * 0.75)
       grp.userData.flag = flag
+    } else if (e.kind === 'tower') {
+      const body = modelInstance(MODELS.buildings.watchtower[0], MODEL_FOOTPRINT.watchtower)
+      grp.add(body)
+      const color = e.owner >= 0 ? PLAYER_COLORS[e.owner] : NEUTRAL_COLOR
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.6, 6), lamb(0x6a4e30))
+      pole.position.set(e.proto.radius * 0.75, 1.3, e.proto.radius * 0.75)
+      grp.add(pole)
+      const flag = box(grp, 0.9, 0.55, 0.04, lamb(color), e.proto.radius * 0.75 + 0.45, 2.35, e.proto.radius * 0.75)
+      grp.userData.flag = flag
+      // capture-progress ring: fills in as a lone claimant holds the ground
+      const capRing = new THREE.Mesh(
+        new THREE.RingGeometry(e.proto.radius + 0.5, e.proto.radius + 0.7, 32, 1, 0, 0),
+        new THREE.MeshBasicMaterial({ color: 0xffe08a, side: THREE.DoubleSide, transparent: true, opacity: 0.9 })
+      )
+      capRing.rotation.x = -Math.PI / 2
+      capRing.position.y = 0.08
+      capRing.visible = false
+      grp.add(capRing)
+      grp.userData.capRing = capRing
+    } else if (e.kind === 'treasure') {
+      const body = modelInstance(MODELS.treasure[0], e.proto.radius * 2.6)
+      grp.add(body)
+      const rad = e.proto.radius + 0.35
+      const glowRing = new THREE.Mesh(
+        new THREE.RingGeometry(rad - 0.14, rad, 32),
+        new THREE.MeshBasicMaterial({ color: 0xf0c04a, side: THREE.DoubleSide, transparent: true, opacity: 0.65 })
+      )
+      glowRing.rotation.x = -Math.PI / 2
+      glowRing.position.y = 0.04
+      grp.add(glowRing)
     } else {
       const built = e.protoId === 'catapult'
         ? { grp: makeCatapult(PLAYER_COLORS[e.owner], e.proto.radius) }
@@ -563,9 +626,9 @@ export class Renderer {
       grp.userData.carryG = built.grp.userData?.carryG
     }
 
-    if (e.kind !== 'resource') {
+    if (e.kind !== 'resource' && e.kind !== 'treasure') {
       const rad = (e.proto.radius || 1) + 0.35
-      const ringCol = PLAYER_COLORS[e.owner]
+      const ringCol = e.owner >= 0 ? PLAYER_COLORS[e.owner] : NEUTRAL_COLOR
       const own = new THREE.Mesh(
         new THREE.RingGeometry(rad - 0.09, rad, 40),
         new THREE.MeshBasicMaterial({ color: ringCol, side: THREE.DoubleSide, transparent: true, opacity: 0.28 })

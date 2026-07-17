@@ -1,4 +1,4 @@
-import { UNITS, BUILDINGS, AGE_UP_COST, AGE_UP_TIME } from './data.js'
+import { UNITS, BUILDINGS, AGE_UP_COST, AGE_UP_TIME, SUPPLY_CAP } from './data.js'
 import {
   MAP, dist, each, findNearest, supplyOf, hasTemple, ageOf,
   canAfford, pay, spawnUnit, spawnBuilding, autoGather, blockedByObstacle, updateVision,
@@ -24,6 +24,8 @@ export function tick(g, dt) {
   each(g, (e) => {
     if (e.kind === 'unit') unitTick(g, e, dt)
     else if (e.kind === 'building') buildingTick(g, e, dt)
+    else if (e.kind === 'tower') towerTick(g, e, dt)
+    else if (e.kind === 'treasure') treasureTick(g, e, dt)
   })
 
   separation(g)
@@ -232,7 +234,7 @@ function separation(g) {
   const buildings = []
   each(g, (e) => {
     if (e.kind === 'unit') units.push(e)
-    else if (e.kind === 'building') buildings.push(e)
+    else if (e.kind === 'building' || e.kind === 'tower') buildings.push(e)
   })
   for (let i = 0; i < units.length; i++) {
     const a = units[i]
@@ -348,6 +350,45 @@ function buildingTick(g, b, dt) {
       }
     }
   }
+}
+
+// ---- neutral map features ---------------------------------------------------
+
+// Capture is presence-based, not combat-based: whoever has the ONLY units
+// within range claims it over captureTime seconds. Two rivals' units nearby
+// at once means a standoff (no progress either way) — the attacker has to
+// actually fight off the defender first, which happens through normal combat
+// aggro, not anything the tower itself does.
+function towerTick(g, tower, dt) {
+  let sole = -2 // -2 = nobody nearby, -1 would collide with "neutral"
+  let contested = false
+  each(g, (e) => {
+    if (contested || e.kind !== 'unit') return
+    if (dist(e, tower) > tower.proto.captureRadius) return
+    if (sole === -2) sole = e.owner
+    else if (sole !== e.owner) contested = true
+  })
+  if (!contested && sole !== -2 && sole !== tower.owner) {
+    tower.captureProgress += dt
+    if (tower.captureProgress >= tower.proto.captureTime) {
+      const prevOwner = tower.owner
+      tower.owner = sole
+      tower.captureProgress = 0
+      g.events.push({ type: 'towerCaptured', id: tower.id, owner: sole, prevOwner })
+    }
+  } else {
+    tower.captureProgress = 0
+  }
+  if (tower.owner >= 0) g.players[tower.owner].g += tower.proto.goldPerSec * dt
+}
+
+function treasureTick(g, chest) {
+  const grabber = findNearest(g, chest, (e) => e.kind === 'unit', chest.proto.pickupRadius)
+  if (!grabber) return
+  g.players[grabber.owner].g += chest.gold
+  chest.dead = true
+  g.events.push({ type: 'death', id: chest.id, x: chest.x, z: chest.z, kind: 'treasure' })
+  g.events.push({ type: 'treasureFound', owner: grabber.owner, gold: chest.gold })
 }
 
 // ---- auras -------------------------------------------------------------------
@@ -534,7 +575,7 @@ export function checkPlacement(g, owner, protoId, x, z) {
   let blocked = false
   each(g, (e) => {
     if (blocked) return
-    if (e.kind === 'building' && dist(e, { x, z }) < e.proto.radius + proto.radius + 0.8) blocked = true
+    if ((e.kind === 'building' || e.kind === 'tower' || e.kind === 'treasure') && dist(e, { x, z }) < e.proto.radius + proto.radius + 0.8) blocked = true
     if (e.kind === 'resource' && e.amount > 0 && dist(e, { x, z }) < e.radius + proto.radius + 0.5) blocked = true
   })
   if (!blocked && blockedByObstacle(g, x, z, proto.radius + 1)) blocked = true
@@ -610,8 +651,10 @@ function aiThink(g, owner, dt) {
     tryQueueUnit(g, th, 'villager')
   }
 
-  // supply (farms)
-  if (sup.max - sup.used < 5 && sup.max < 70) {
+  // supply (farms) — this ceiling used to be a hardcoded 70, tuned for the old
+  // 80 supply cap; it silently capped AI economies well below the real cap
+  // once that was raised, so it's now relative to SUPPLY_CAP instead.
+  if (sup.max - sup.used < 5 && sup.max < SUPPLY_CAP - 15) {
     const pending = findAI(g, owner, (e) => e.kind === 'building' && e.proto.supply && e.constructing)
     if (!pending) aiBuild(g, owner, 'farm', th, workers)
   }

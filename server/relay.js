@@ -23,7 +23,7 @@ function send(ws, msg) {
 
 function startMatch(room) {
   const seed = Math.floor(Math.random() * 2 ** 31)
-  room.sockets.forEach((ws, slot) => send(ws, { type: 'start', seed, slot }))
+  room.sockets.forEach((ws, slot) => send(ws, { type: 'start', seed, slot, mapSettings: room.mapSettings }))
 }
 
 const wss = new WebSocketServer({ port: PORT })
@@ -39,7 +39,7 @@ wss.on('connection', (ws) => {
     if (msg.type === 'host') {
       let code
       do { code = makeCode() } while (rooms.has(code))
-      const room = { sockets: [ws, null] }
+      const room = { sockets: [ws, null], mapSettings: msg.mapSettings }
       rooms.set(code, room)
       ws.room = code
       ws.slot = 0
