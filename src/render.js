@@ -244,8 +244,15 @@ export class Renderer {
     this.game = game
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    // PCFSoftShadowMap is THREE's most expensive shadow filter (wide multi-tap
+    // kernel); with hundreds of shadow-casting units/buildings across a real
+    // multiplayer match (more so at 3-4 players, or with the 200 supply cap
+    // actually reached) the shadow pass becomes a real, continuous GPU cost —
+    // units are moving essentially every frame during play, so there's no
+    // "camera is still, skip it" case to lean on. Plain PCFShadowMap is
+    // meaningfully cheaper with only a small softness difference.
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.1
 
@@ -265,7 +272,7 @@ export class Renderer {
     const sun = new THREE.DirectionalLight(0xfff2d8, 2.6)
     sun.position.set(60, 95, 30)
     sun.castShadow = true
-    sun.shadow.mapSize.set(2048, 2048)
+    sun.shadow.mapSize.set(1024, 1024)
     const sc = 120
     sun.shadow.camera.left = -sc; sun.shadow.camera.right = sc
     sun.shadow.camera.top = sc; sun.shadow.camera.bottom = -sc

@@ -226,7 +226,18 @@ export class Input {
       this.clampCam()
       this.r.updateCamera()
     }
-    if (!this.drag && !this.pan) this.updateCursor(this.nxy(e))
+    if (!this.drag && !this.pan) {
+      // Raycasts against every tracked mesh (units+buildings+towers+... each
+      // several sub-meshes) — mousemove can fire far faster than that needs to
+      // run for a hover hint, and with hundreds of entities in a real multi-
+      // player match this was a real, easily-missed per-move cost. A cursor
+      // hint doesn't need to be pixel-perfect responsive; ~60Hz is plenty.
+      const now = performance.now()
+      if (now - (this._lastCursorUpdate ?? 0) >= 50) {
+        this._lastCursorUpdate = now
+        this.updateCursor(this.nxy(e))
+      }
+    }
   }
 
   // Swaps the canvas cursor to hint what a click will do: attack, gather,

@@ -21,12 +21,24 @@ export function tick(g, dt) {
 
   for (let i = 0; i < g.players.length; i++) if (g.players[i].isAI) aiThink(g, i, dt)
 
+  // Collect units once and hand them to towerTick/treasureTick below instead of
+  // each() re-scanning every entity (units+buildings+resources+other features)
+  // per tower/chest — that O(features * totalEntities) pattern is exactly the
+  // bug already fixed once in separation(); the neutral-feature code repeated
+  // it, and with real multiplayer economies (hundreds of entities across 3+
+  // active players, not a lightly-tested 1-2 player scenario) it compounds into
+  // real stutter every tick.
+  const units = []
+  const towers = []
+  const treasures = []
   each(g, (e) => {
-    if (e.kind === 'unit') unitTick(g, e, dt)
+    if (e.kind === 'unit') { unitTick(g, e, dt); units.push(e) }
     else if (e.kind === 'building') buildingTick(g, e, dt)
-    else if (e.kind === 'tower') towerTick(g, e, dt)
-    else if (e.kind === 'treasure') treasureTick(g, e, dt)
+    else if (e.kind === 'tower') towers.push(e)
+    else if (e.kind === 'treasure') treasures.push(e)
   })
+  for (const t of towers) towerTick(g, t, dt, units)
+  for (const c of treasures) treasureTick(g, c, units)
 
   separation(g)
   auras(g, dt)
@@ -359,15 +371,15 @@ function buildingTick(g, b, dt) {
 // at once means a standoff (no progress either way) — the attacker has to
 // actually fight off the defender first, which happens through normal combat
 // aggro, not anything the tower itself does.
-function towerTick(g, tower, dt) {
+function towerTick(g, tower, dt, units) {
   let sole = -2 // -2 = nobody nearby, -1 would collide with "neutral"
   let contested = false
-  each(g, (e) => {
-    if (contested || e.kind !== 'unit') return
-    if (dist(e, tower) > tower.proto.captureRadius) return
+  for (const e of units) {
+    if (contested) break
+    if (dist(e, tower) > tower.proto.captureRadius) continue
     if (sole === -2) sole = e.owner
     else if (sole !== e.owner) contested = true
-  })
+  }
   if (!contested && sole !== -2 && sole !== tower.owner) {
     tower.captureProgress += dt
     if (tower.captureProgress >= tower.proto.captureTime) {
@@ -382,8 +394,12 @@ function towerTick(g, tower, dt) {
   if (tower.owner >= 0) g.players[tower.owner].g += tower.proto.goldPerSec * dt
 }
 
-function treasureTick(g, chest) {
-  const grabber = findNearest(g, chest, (e) => e.kind === 'unit', chest.proto.pickupRadius)
+function treasureTick(g, chest, units) {
+  let grabber = null, bd = chest.proto.pickupRadius
+  for (const e of units) {
+    const d = dist(e, chest)
+    if (d < bd) { bd = d; grabber = e }
+  }
   if (!grabber) return
   g.players[grabber.owner].g += chest.gold
   chest.dead = true
