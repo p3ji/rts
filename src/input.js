@@ -64,6 +64,17 @@ export class Input {
           this.clearSelection()
           for (const ent of ents) { ent.selected = true; this.selected.push(ent) }
           this.ui.refresh(this.selected)
+          
+          const now = performance.now()
+          if (this.lastGroupTapKey === k && now - (this.lastGroupTapTime || 0) < 400) {
+            let sumX = 0, sumZ = 0
+            for (const ent of ents) { sumX += ent.x; sumZ += ent.z }
+            this.r.camTarget.set(sumX / ents.length, 0, sumZ / ents.length)
+            this.clampCam()
+            this.r.updateCamera()
+          }
+          this.lastGroupTapKey = k
+          this.lastGroupTapTime = now
         }
       }
       return
@@ -192,7 +203,7 @@ export class Input {
         const pt = this.r.screenToGround(n.x, n.y)
         const units = this.selected.filter((u) => u.kind === 'unit' && !u.dead)
         if (units.length) {
-          issue(this.game, { t: 'move', p: this.game.localPlayer, units: ids(units), x: pt.x, z: pt.z, am: true })
+          issue(this.game, { t: 'move', p: this.game.localPlayer, units: ids(units), x: pt.x, z: pt.z, am: true, queue: this.keys.has('shift') })
           this.r.orderFx(pt.x, pt.z, 0xe0483a)
         }
         this.attackModifier = false
@@ -274,6 +285,12 @@ export class Input {
 
   clickSelect(n, additive) {
     const ent = this.r.pickEntity(n.x, n.y)
+    
+    const now = performance.now()
+    const isDoubleClick = ent && this.lastClickEnt === ent && (now - (this.lastClickTime || 0)) < 400
+    this.lastClickEnt = ent
+    this.lastClickTime = now
+
     if (!additive) this.clearSelection()
     if (ent && (ent.kind === 'resource' || ent.kind === 'tower' || ent.kind === 'treasure')) {
       this.inspected = ent
@@ -281,8 +298,21 @@ export class Input {
     } else {
       this.inspected = null
       if (ent && ent.owner === this.game.localPlayer) {
-        ent.selected = true
-        if (!this.selected.includes(ent)) this.selected.push(ent)
+        if (isDoubleClick && ent.kind === 'building') {
+          const cx = this.r.camTarget.x, cz = this.r.camTarget.z
+          const r = this.r.camDist * 1.5 // approximate screen radius on ground
+          each(this.game, (x) => {
+            if (x.owner === this.game.localPlayer && x.kind === 'building' && x.protoId === ent.protoId && !x.dead) {
+              if (Math.abs(x.x - cx) < r && Math.abs(x.z - cz) < r) {
+                x.selected = true
+                if (!this.selected.includes(x)) this.selected.push(x)
+              }
+            }
+          })
+        } else {
+          ent.selected = true
+          if (!this.selected.includes(ent)) this.selected.push(ent)
+        }
       }
     }
     this.ui.refresh(this.selected, this.inspected)
@@ -335,15 +365,15 @@ export class Input {
     if (target && !target.dead) {
       if (target.kind === 'resource') {
         const workers = units.filter((u) => u.proto.worker)
-        if (workers.length) { issue(g, { t: 'gather', p: me, units: ids(workers), node: target.id }); this.ui.toast('Gathering') }
+        if (workers.length) { issue(g, { t: 'gather', p: me, units: ids(workers), node: target.id, queue: this.keys.has('shift') }); this.ui.toast('Gathering') }
         const rest = units.filter((u) => !u.proto.worker)
-        if (rest.length) issue(g, { t: 'move', p: me, units: ids(rest), x: target.x, z: target.z, am: false })
+        if (rest.length) issue(g, { t: 'move', p: me, units: ids(rest), x: target.x, z: target.z, am: false, queue: this.keys.has('shift') })
         this.r.orderFx(target.x, target.z, target.rtype === 'wood' ? 0x4a8f3a : 0xe8c447)
         return
       }
       if (target.kind === 'tower' || target.kind === 'treasure') {
         // not attackable — capture/pickup is purely presence-based, so just walk there
-        issue(g, { t: 'move', p: me, units: ids(units), x: target.x, z: target.z, am: false })
+        issue(g, { t: 'move', p: me, units: ids(units), x: target.x, z: target.z, am: false, queue: this.keys.has('shift') })
         this.r.orderFx(target.x, target.z, myColor)
         return
       }
@@ -351,22 +381,22 @@ export class Input {
         // friendly: resume construction or repair
         if (target.kind === 'building' && target.constructing) {
           const workers = units.filter((u) => u.proto.worker)
-          if (workers.length) { issue(g, { t: 'construct', p: me, units: ids(workers), site: target.id }); this.ui.toast('Resuming construction'); this.r.orderFx(target.x, target.z, myColor); return }
+          if (workers.length) { issue(g, { t: 'construct', p: me, units: ids(workers), site: target.id, queue: this.keys.has('shift') }); this.ui.toast('Resuming construction'); this.r.orderFx(target.x, target.z, myColor); return }
         }
         if (target.hp < target.maxHp) {
           const fixers = units.filter((u) => u.proto.repairs)
-          if (fixers.length) { issue(g, { t: 'repair', p: me, units: ids(fixers), target: target.id }); this.ui.toast('Repairing'); this.r.orderFx(target.x, target.z, myColor); return }
+          if (fixers.length) { issue(g, { t: 'repair', p: me, units: ids(fixers), target: target.id, queue: this.keys.has('shift') }); this.ui.toast('Repairing'); this.r.orderFx(target.x, target.z, myColor); return }
         }
-        issue(g, { t: 'move', p: me, units: ids(units), x: target.x, z: target.z, am: false })
+        issue(g, { t: 'move', p: me, units: ids(units), x: target.x, z: target.z, am: false, queue: this.keys.has('shift') })
         this.r.orderFx(target.x, target.z, myColor)
         return
       }
       // enemy
-      issue(g, { t: 'attack', p: me, units: ids(units), target: target.id })
+      issue(g, { t: 'attack', p: me, units: ids(units), target: target.id, queue: this.keys.has('shift') })
       this.r.orderFx(target.x, target.z, 0xe0483a)
       return
     }
-    issue(g, { t: 'move', p: me, units: ids(units), x: pt.x, z: pt.z, am: false })
+    issue(g, { t: 'move', p: me, units: ids(units), x: pt.x, z: pt.z, am: false, queue: this.keys.has('shift') })
     this.r.orderFx(pt.x, pt.z, myColor)
   }
 
@@ -380,8 +410,9 @@ export class Input {
     const chk = checkPlacement(g, me, this.placing.protoId, pt.x, pt.z)
     if (!chk.ok) { this.ui.toast(chk.reason, true); return }
     if (!canAfford(g, me, proto.cost)) { this.ui.toast('Not enough resources', true); return }
-    issue(g, { t: 'build', p: me, proto: this.placing.protoId, x: chk.x, z: chk.z, builder: builder.id })
-    this.stopPlacing()
+    const queue = this.keys.has('shift')
+    issue(g, { t: 'build', p: me, proto: this.placing.protoId, x: chk.x, z: chk.z, builder: builder.id, queue })
+    if (!queue) this.stopPlacing()
     this.ui.toast(`Constructing ${proto.name}`)
     this.ui.refresh(this.selected)
   }

@@ -241,7 +241,16 @@ export class UI {
         if (!locked) {
           b.onclick = () => {
             if (!canAfford(this.game, this.me, u.cost)) { this.toast('Not enough resources', true); return }
-            issue(this.game, { t: 'queue', p: this.me, b: first.id, proto: uid })
+            const validBuildings = selected.filter((b2) => b2.kind === 'building' && !b2.constructing && b2.protoId === first.protoId)
+            let bestBuilding = first
+            if (validBuildings.length > 1) {
+              let minQ = 999
+              for (const b2 of validBuildings) {
+                const qLen = b2.queue ? b2.queue.length : 0
+                if (qLen < minQ) { minQ = qLen; bestBuilding = b2 }
+              }
+            }
+            issue(this.game, { t: 'queue', p: this.me, b: bestBuilding.id, proto: uid })
           }
         }
         actions.appendChild(b)

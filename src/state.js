@@ -204,12 +204,12 @@ function generateMap(g, rnd, spawns) {
     const z = (rnd() * 2 - 1) * lim
     if (nearSpawn(x, z, 22) || nearObstacle(x, z, 3)) continue
     const roll = rnd()
-    const model = roll < 0.62 ? 'rock' : roll < 0.9 ? 'prop' : 'windmill'
+    const model = roll < 0.7 ? 'rock' : 'prop'
     g.decor.push({
       x, z, model,
-      variant: Math.floor(rnd() * (model === 'rock' ? 3 : model === 'prop' ? 3 : 1)),
+      variant: Math.floor(rnd() * 3),
       rot: rnd() * Math.PI * 2,
-      scale: model === 'windmill' ? 1 : 0.6 + rnd() * 0.7,
+      scale: 0.6 + rnd() * 0.7,
     })
   }
 
@@ -280,7 +280,7 @@ export function spawnUnit(g, owner, protoId, x, z) {
     id: g.nextId++, kind: 'unit', protoId, proto: p, owner,
     x, z, rot: 0,
     hp: p.hp, maxHp: p.hp, lastHit: -99,
-    order: { type: 'idle' },
+    order: { type: 'idle' }, orderQueue: [],
     atkT: 0, gatherT: 0, carry: null,
     buffSpeed: 1, buffAtk: 1, slowUntil: 0,
     dead: false,

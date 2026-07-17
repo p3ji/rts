@@ -101,10 +101,16 @@ export const BUILDINGS = {
     trains: ['priest'],
     desc: 'Required to advance to Age II. Trains Priests in Age II.',
   },
+  wall: {
+    name: 'Wall', kind: 'wall', age: 1,
+    cost: { w: 5 }, buildTime: 8,
+    hp: 400, radius: 1.0,
+    desc: 'A sturdy stone barrier to protect your kingdom.',
+  },
 }
 
 // Build menu shown to villagers (order matters)
-export const BUILD_MENU = ['farm', 'storage', 'barracks', 'archery', 'watchtower', 'temple', 'towncenter']
+export const BUILD_MENU = ['wall', 'farm', 'storage', 'barracks', 'archery', 'watchtower', 'temple', 'towncenter']
 
 // Neutral map features — not owned by anyone at game start.
 export const NEUTRAL_TOWER = {
@@ -122,7 +128,7 @@ export const RESOURCE_ABUNDANCE = {
   low: { name: 'Scarce', mul: 0.6 },
   normal: { name: 'Normal', mul: 1 },
   high: { name: 'Abundant', mul: 1.8 },
-  infinite: { name: 'Infinite', mul: Infinity },
+  infinite: { name: 'Infinite', mul: 999999 },
 }
 
 // AI difficulty presets
@@ -158,6 +164,7 @@ export const MODELS = {
     storage: ['Storage_FirstAge_Level2', 'Storage_SecondAge_Level2'],
     watchtower: ['WatchTower_FirstAge_Level2', 'WatchTower_SecondAge_Level2'],
     temple: ['Temple_FirstAge_Level2', 'Temple_SecondAge_Level2'],
+    wall: ['Wall_FirstAge_Level2', 'Wall_SecondAge_Level2'],
   },
   resources: {
     tree: ['Resource_Tree_Group', 'Resource_Tree_Group_Cut'],
@@ -176,5 +183,5 @@ export const MODELS = {
 // Building footprint (world units across) each model is scaled to
 export const MODEL_FOOTPRINT = {
   towncenter: 10.5, farm: 5.4, barracks: 7.6, archery: 7.6,
-  storage: 5.4, watchtower: 3.6, temple: 6.8,
+  storage: 5.4, watchtower: 3.6, temple: 6.8, wall: 2.0,
 }

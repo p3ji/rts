@@ -117,6 +117,12 @@ function getFaceTexture() {
   return faceTex
 }
 
+const TEAM_MATERIALS = {}
+function getTeamMaterial(color) {
+  if (!TEAM_MATERIALS[color]) TEAM_MATERIALS[color] = lamb(color)
+  return TEAM_MATERIALS[color]
+}
+
 function lamb(color) { return new THREE.MeshStandardMaterial({ color, roughness: 0.9, metalness: 0.02 }) }
 function metal(color = 0xb8bfc8) { return new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.55 }) }
 
@@ -513,7 +519,7 @@ export class Renderer {
         ud.selRing.visible = !!e.selected
         if (e.selected) ud.selRing.material.opacity = 0.75 + Math.sin(t * 5) * 0.2
       }
-      if (ud.flag) ud.flag.rotation.y = Math.sin(t * 1.6 + id) * 0.25
+
       if (ud.capRing) {
         const capturing = e.captureProgress > 0
         ud.capRing.visible = capturing
@@ -584,23 +590,16 @@ export class Renderer {
       grp.userData.selRing = selRing
     } else if (e.kind === 'building') {
       const body = modelInstance(buildingModelName(e.protoId, e.age), MODEL_FOOTPRINT[e.protoId])
-      grp.add(body)
-      // team banner
       const color = PLAYER_COLORS[e.owner]
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.6, 6), lamb(0x6a4e30))
-      pole.position.set(e.proto.radius * 0.75, 1.3, e.proto.radius * 0.75)
-      grp.add(pole)
-      const flag = box(grp, 0.9, 0.55, 0.04, lamb(color), e.proto.radius * 0.75 + 0.45, 2.35, e.proto.radius * 0.75)
-      grp.userData.flag = flag
+      const mat = getTeamMaterial(color)
+      body.traverse((m) => { if (m.isMesh && m.material.name === 'Main') m.material = mat })
+      grp.add(body)
     } else if (e.kind === 'tower') {
       const body = modelInstance(MODELS.buildings.watchtower[0], MODEL_FOOTPRINT.watchtower)
-      grp.add(body)
       const color = e.owner >= 0 ? PLAYER_COLORS[e.owner] : NEUTRAL_COLOR
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.6, 6), lamb(0x6a4e30))
-      pole.position.set(e.proto.radius * 0.75, 1.3, e.proto.radius * 0.75)
-      grp.add(pole)
-      const flag = box(grp, 0.9, 0.55, 0.04, lamb(color), e.proto.radius * 0.75 + 0.45, 2.35, e.proto.radius * 0.75)
-      grp.userData.flag = flag
+      const mat = getTeamMaterial(color)
+      body.traverse((m) => { if (m.isMesh && m.material.name === 'Main') m.material = mat })
+      grp.add(body)
       // capture-progress ring: fills in as a lone claimant holds the ground
       const capRing = new THREE.Mesh(
         new THREE.RingGeometry(e.proto.radius + 0.5, e.proto.radius + 0.7, 32, 1, 0, 0),

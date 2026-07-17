@@ -70,13 +70,13 @@ function unitTick(g, u, dt) {
       break
     }
     case 'move': {
-      if (arrive(g, u, o.x, o.z, 0.6, dt)) u.order = { type: 'idle' }
+      if (arrive(g, u, o.x, o.z, 0.6, dt)) popOrder(u)
       break
     }
     case 'attackmove': {
       const t = acquire(g, u, Math.max(u.proto.aggro, 7))
       if (t) { u.order = { type: 'attack', targetId: t.id, resume: o }; break }
-      if (arrive(g, u, o.x, o.z, 0.8, dt)) u.order = { type: 'idle' }
+      if (arrive(g, u, o.x, o.z, 0.8, dt)) popOrder(u)
       break
     }
     case 'patrol': {
@@ -88,7 +88,7 @@ function unitTick(g, u, dt) {
     }
     case 'attack': {
       const t = g.entities.get(o.targetId)
-      if (!t || t.dead) { u.order = o.resume || { type: 'idle' }; break }
+      if (!t || t.dead) { popOrder(u, o.resume); break }
       const d = dist(u, t) - (t.proto.radius || t.radius || 1)
       const range = Math.max(u.proto.range, 0.6)
       if (d > range) moveToward(g, u, t.x, t.z, dt)
@@ -105,7 +105,7 @@ function unitTick(g, u, dt) {
     case 'return': returnTick(g, u, dt); break
     case 'build': {
       const site = g.entities.get(o.siteId)
-      if (!site || site.dead || !site.constructing) { u.order = { type: 'idle' }; break }
+      if (!site || site.dead || !site.constructing) { popOrder(u); break }
       const d = dist(u, site) - site.proto.radius
       if (d > 1.2) moveToward(g, u, site.x, site.z, dt)
       else {
@@ -114,7 +114,7 @@ function unitTick(g, u, dt) {
         if (site.progress >= 1) {
           site.constructing = false
           g.events.push({ type: 'complete', id: site.id, owner: site.owner })
-          u.order = { type: 'idle' }
+          popOrder(u)
           if (u.proto.worker) autoGather(g, u)
         }
       }
@@ -122,7 +122,7 @@ function unitTick(g, u, dt) {
     }
     case 'repair': {
       const t = g.entities.get(o.targetId)
-      if (!t || t.dead || t.hp >= t.maxHp) { u.order = { type: 'idle' }; break }
+      if (!t || t.dead || t.hp >= t.maxHp) { popOrder(u); break }
       const d = dist(u, t) - (t.proto.radius || 1)
       if (d > 1.2) moveToward(g, u, t.x, t.z, dt)
       else t.hp = Math.min(t.maxHp, t.hp + 8 * dt)
@@ -141,7 +141,7 @@ function gatherTick(g, u, o, dt) {
     const next = findNearest(g, u, (e) => e.kind === 'resource' && e.amount > 0 && (!sameType || e.rtype === sameType))
       || findNearest(g, u, (e) => e.kind === 'resource' && e.amount > 0)
     if (next) o.nodeId = next.id
-    else u.order = { type: 'idle' }
+    else popOrder(u)
     return
   }
 
@@ -163,7 +163,7 @@ function gatherTick(g, u, o, dt) {
 
 function returnTick(g, u, dt) {
   const drop = findNearest(g, u, (e) => e.kind === 'building' && e.owner === u.owner && e.proto.dropoff && !e.constructing)
-  if (!drop) { u.order = { type: 'idle' }; return }
+  if (!drop) { popOrder(u); return }
   const d = dist(u, drop) - drop.proto.radius
   if (d > DROP_RANGE) moveToward(g, u, drop.x, drop.z, dt)
   else {
@@ -174,7 +174,7 @@ function returnTick(g, u, dt) {
       u.carry = null
     }
     const back = u.order.backTo
-    u.order = back ? { ...back } : { type: 'idle' }
+    popOrder(u, back ? { ...back } : undefined)
   }
 }
 
@@ -517,7 +517,7 @@ export function applyCommand(g, c) {
     }
     case 'build': {
       const b = g.entities.get(c.builder)
-      const r = tryPlaceBuilding(g, c.p, c.proto, c.x, c.z, b && !b.dead ? b : null)
+      const r = tryPlaceBuilding(g, c.p, c.proto, c.x, c.z, b && !b.dead ? b : null, c.queue)
       if (!r.ok && c.p === g.localPlayer) g.events.push({ type: 'cmdfail', owner: c.p, reason: r.reason })
       break
     }
@@ -567,30 +567,47 @@ export function checksum(g) {
 
 const ORDER_CODE = { idle: 1, move: 2, attackmove: 3, attack: 4, gather: 5, return: 6, build: 7, repair: 8, patrol: 9 }
 
+export function setOrder(u, ord, queue) {
+  if (queue && u.order.type !== 'idle') {
+    u.orderQueue.push(ord)
+  } else {
+    u.orderQueue = []
+    u.order = ord
+  }
+}
+
+export function popOrder(u, defaultOrder) {
+  if (u.orderQueue && u.orderQueue.length > 0) {
+    u.order = u.orderQueue.shift()
+  } else {
+    u.order = defaultOrder || { type: 'idle' }
+  }
+}
+
 // ---- commands (player + AI use the same API) --------------------------------
 
-export function cmdMove(g, units, x, z, attackMove = false) {
+export function cmdMove(g, units, x, z, attackMove = false, queue = false) {
   const n = units.length
   units.forEach((u, i) => {
     const a = (i / Math.max(1, n)) * Math.PI * 2
     const r = i === 0 ? 0 : 0.9 + Math.floor(i / 7) * 1.2
     const ox = Math.cos(a) * r, oz = Math.sin(a) * r
-    u.order = attackMove
+    setOrder(u, attackMove
       ? { type: 'attackmove', x: x + ox, z: z + oz }
-      : { type: 'move', x: x + ox, z: z + oz }
+      : { type: 'move', x: x + ox, z: z + oz }, queue)
   })
 }
 
-export function cmdAttack(g, units, target) {
-  units.forEach((u) => { u.order = { type: 'attack', targetId: target.id, resume: { type: 'idle' } } })
+export function cmdAttack(g, units, target, queue = false) {
+  units.forEach((u) => { setOrder(u, { type: 'attack', targetId: target.id, resume: { type: 'idle' } }, queue) })
 }
 
-export function cmdGather(g, units, node) {
-  units.forEach((u) => { if (u.proto.worker) u.order = { type: 'gather', nodeId: node.id } })
+export function cmdGather(g, units, node, queue = false) {
+  units.forEach((u) => { if (u.proto.worker) setOrder(u, { type: 'gather', nodeId: node.id }, queue) })
 }
 
-export function cmdRepair(g, units, target) {
-  units.forEach((u) => { if (u.proto.repairs) u.order = { type: 'repair', targetId: target.id } })
+export function cmdRepair(g, units, target, queue = false) {
+  units.forEach((u) => { if (u.proto.repairs) setOrder(u, { type: 'repair', targetId: target.id }, queue) })
 }
 
 export function checkPlacement(g, owner, protoId, x, z) {
@@ -608,7 +625,7 @@ export function checkPlacement(g, owner, protoId, x, z) {
   return { ok: true, x, z }
 }
 
-export function tryPlaceBuilding(g, owner, protoId, x, z, builder) {
+export function tryPlaceBuilding(g, owner, protoId, x, z, builder, queue = false) {
   const proto = BUILDINGS[protoId]
   if (!canAfford(g, owner, proto.cost)) return { ok: false, reason: 'Not enough resources' }
   const chk = checkPlacement(g, owner, protoId, x, z)
@@ -616,7 +633,7 @@ export function tryPlaceBuilding(g, owner, protoId, x, z, builder) {
 
   pay(g, owner, proto.cost)
   const b = spawnBuilding(g, owner, protoId, chk.x, chk.z, false)
-  if (builder) builder.order = { type: 'build', siteId: b.id }
+  if (builder) setOrder(builder, { type: 'build', siteId: b.id }, queue)
   return { ok: true, building: b }
 }
 
