@@ -278,6 +278,11 @@
       background: #17130a; border: 2px dashed #8a6f3e; border-radius: 10px; padding: 14px 22px;
     }
     .lobby-msg { color: #cdbfa0; font-size: 15px; }
+    .lobby-players { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+    .lobby-players .slot-chip {
+      padding: 6px 12px; border-radius: 7px; font-size: 13px; font-weight: 700;
+      background: #241d0f; border: 1px solid #5c4c2c; color: #e8dcc0;
+    }
     .spinner {
       width: 22px; height: 22px; border: 3px solid #4a3d26; border-top-color: #d8a52e;
       border-radius: 50%; animation: spin 0.8s linear infinite;
@@ -403,9 +408,11 @@
       </div>
 
       <div class="lobby-status" id="lobby-status">
-        <div class="spinner"></div>
+        <div class="spinner" id="lobby-spinner"></div>
         <div class="lobby-code" id="lobby-code" style="display:none;"></div>
         <div class="lobby-msg" id="lobby-msg">Connecting…</div>
+        <div class="lobby-players" id="lobby-players" style="display:none;"></div>
+        <button id="btn-start-match" class="opt" style="display:none;">⚔ Start Match</button>
         <button id="btn-lobby-cancel">Cancel</button>
       </div>
     </div>

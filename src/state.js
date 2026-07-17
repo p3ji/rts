@@ -59,7 +59,7 @@ export function createGame({ aiCount = 1, humanCount = 1, difficulty = 'normal',
   }
 
   // First `humanCount` slots are human-controlled (local or networked); the rest are AI.
-  const nHumans = Math.max(1, Math.min(2, humanCount))
+  const nHumans = Math.max(1, Math.min(4, humanCount))
   const nPlayers = Math.min(4, nHumans + Math.max(0, aiCount))
   for (let i = 0; i < nPlayers; i++) {
     const isAI = i >= nHumans

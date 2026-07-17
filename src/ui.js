@@ -1,4 +1,4 @@
-import { UNITS, BUILDINGS, BUILD_MENU, DIFFICULTY, PLAYER_COLORS, AGE_UP_COST, RESOURCE_ABUNDANCE } from './data.js'
+import { UNITS, BUILDINGS, BUILD_MENU, DIFFICULTY, PLAYER_COLORS, PLAYER_NAMES, AGE_UP_COST, RESOURCE_ABUNDANCE } from './data.js'
 import { each, supplyOf, ageOf, hasTemple, canAfford, isVisible, isExplored, MAP } from './state.js'
 import { issue } from './sim.js'
 import { PORTRAITS } from './render.js'
@@ -578,21 +578,45 @@ function setupOnlineTab(homeEl, onStart, getMapSettings) {
   }
 
   let net = null
+  let isHost = false
   const showChoice = () => {
     net?.close(); net = null
     choice.style.display = ''; joinForm.style.display = 'none'; status.classList.remove('show')
     $('lobby-code').style.display = 'none'
+    $('lobby-players').style.display = 'none'
+    $('btn-start-match').style.display = 'none'
+    $('lobby-spinner').style.display = ''
   }
   const showStatus = (msg) => {
     choice.style.display = 'none'; joinForm.style.display = 'none'
     status.classList.add('show')
+    $('lobby-spinner').style.display = ''
+    $('lobby-players').style.display = 'none'
+    $('btn-start-match').style.display = 'none'
     $('lobby-msg').textContent = msg
+  }
+  // Room supports up to 4 players; the host decides when to start (not an
+  // auto-start on the 2nd join), so a LAN party can wait for everyone first.
+  const showLobby = (slots) => {
+    $('lobby-spinner').style.display = 'none'
+    $('lobby-players').style.display = 'flex'
+    $('lobby-players').innerHTML = slots
+      .map((s) => `<span class="slot-chip">${PLAYER_NAMES[s]}${s === 0 ? ' (host)' : ''}</span>`)
+      .join('')
+    $('lobby-msg').textContent = isHost
+      ? (slots.length < 2 ? 'Share this code — waiting for at least one more player…' : 'Start whenever you\'re ready, or wait for more players (up to 4).')
+      : 'Waiting for the host to start the match…'
+    const startBtn = $('btn-start-match')
+    startBtn.style.display = isHost ? '' : 'none'
+    startBtn.disabled = slots.length < 2
   }
 
   $('btn-lobby-cancel').onclick = showChoice
   $('btn-join').onclick = () => { choice.style.display = 'none'; joinForm.style.display = ''; $('join-code').focus() }
+  $('btn-start-match').onclick = () => net?.startMatch()
 
   $('btn-host').onclick = () => {
+    isHost = true
     showStatus('Connecting to relay…')
     net = new NetClient(relayInput.value.trim())
     net.connect().then(() => {
@@ -601,10 +625,11 @@ function setupOnlineTab(homeEl, onStart, getMapSettings) {
         if (msg.type === 'hosted') {
           $('lobby-code').textContent = msg.code
           $('lobby-code').style.display = ''
-          showStatus('Share this code — waiting for your rival to join…')
+        } else if (msg.type === 'lobby') {
+          showLobby(msg.slots)
         } else if (msg.type === 'start') {
           homeEl.style.display = 'none'
-          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings })
+          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings, playerCount: msg.playerCount })
         }
       }
       net.onClose = () => showStatus('Connection lost. Try again.')
@@ -612,6 +637,7 @@ function setupOnlineTab(homeEl, onStart, getMapSettings) {
   }
 
   $('btn-join-confirm').onclick = () => {
+    isHost = false
     const code = $('join-code').value.trim().toUpperCase()
     if (code.length !== 4) return
     showStatus('Connecting to relay…')
@@ -619,11 +645,11 @@ function setupOnlineTab(homeEl, onStart, getMapSettings) {
     net.connect().then(() => {
       net.join(code)
       net.onMessage = (msg) => {
-        if (msg.type === 'joined') showStatus('Joined — waiting for the match to start…')
+        if (msg.type === 'lobby') showLobby(msg.slots)
         else if (msg.type === 'error') showStatus(msg.reason || 'Could not join that room.')
         else if (msg.type === 'start') {
           homeEl.style.display = 'none'
-          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings })
+          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings, playerCount: msg.playerCount })
         }
       }
       net.onClose = () => showStatus('Connection lost. Try again.')

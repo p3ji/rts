@@ -55,22 +55,22 @@ function start(opts) {
   runRenderLoop(game, renderer, input, ui)
 }
 
-// ---- online 1v1: buffered delayed-command simulation -----------------------------
+// ---- online LAN party (2-4 players): buffered delayed-command simulation --------
 //
-// Both peers run the same deterministic simulation. A player command is tagged for
+// Every peer runs the same deterministic simulation. A player command is tagged for
 // execution 15 ticks in the future. This is intentionally *not* a strict per-tick
-// heartbeat gate: that design freezes both players whenever Wi-Fi has a transient
+// heartbeat gate: that design freezes every player whenever Wi-Fi has a transient
 // delayed packet. The 500ms command buffer absorbs normal LAN jitter while each
 // client keeps its simulation and rendering fluid. Checksums still detect a real
 // late-command desync instead of hiding it.
 function startOnline(opts) {
-  const { net, seed, slot, mapSettings } = opts
-  const game = createGame({ humanCount: 2, aiCount: 0, difficulty: 'normal', seed, mapSettings })
+  const { net, seed, slot, mapSettings, playerCount } = opts
+  const game = createGame({ humanCount: playerCount, aiCount: 0, difficulty: 'normal', seed, mapSettings })
   game.localPlayer = slot
   game.inputDelay = ONLINE_INPUT_DELAY
   game.isOnline = true
 
-  let peerLeft = false
+  let relayLost = false
   let desynced = false
   const localChecksums = new Map()
   const net$ = { lateCommands: 0, maxLateTicks: 0, ticksProcessed: 0, windowStart: performance.now() }
@@ -94,23 +94,25 @@ function startOnline(opts) {
         ui.toast('Desync detected - simulations have diverged. Please restart the match.', true)
       }
     } else if (msg.type === 'peer_left') {
-      peerLeft = true
-      ui.toast('Your rival disconnected.', true)
+      // One rival dropping doesn't end the match for everyone else — they just
+      // stop sending commands, same as an AFK player; the sim keeps going.
+      ui.toast(`${game.players[msg.slot]?.name ?? 'A rival'} disconnected.`, true)
     }
   }
   net.onClose = () => {
-    if (peerLeft) return
-    peerLeft = true
+    if (relayLost) return
+    relayLost = true
     ui.toast('Connection to the relay was lost.', true)
   }
 
-  ui.toast(`Online match vs ${game.players[1 - slot].name} - commands have a 0.5s network buffer`)
+  const others = game.players.map((p, i) => i).filter((i) => i !== slot).map((i) => game.players[i].name)
+  ui.toast(`Online match vs ${others.join(', ')} - commands have a 0.5s network buffer`)
   window.__net = { get tick() { return game.tick }, stats: net$ }
 
   let ended = false
   let simLast = performance.now()
   setInterval(() => {
-    if (peerLeft || desynced) return
+    if (relayLost || desynced) return
     const now = performance.now()
     let acc = Math.min(0.25, (now - simLast) / 1000)
     simLast = now
