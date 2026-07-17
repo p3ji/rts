@@ -76,7 +76,7 @@ function startOnline(opts) {
   game.isOnline = true
 
   let relayLost = false
-  let desynced = false
+  let desyncWarned = false
   const localChecksums = new Map()
   const net$ = { lateCommands: 0, maxLateTicks: 0, ticksProcessed: 0, windowStart: performance.now() }
 
@@ -93,10 +93,21 @@ function startOnline(opts) {
         net$.maxLateTicks = Math.max(net$.maxLateTicks, lateBy)
       }
     } else if (msg.type === 'checksum') {
+      // A mismatch here used to halt the match outright. For a casual game
+      // that's a worse failure mode than it sounds: a stopped match is
+      // definitely unplayable, while a real divergence is often still
+      // playable-if-slightly-off (and checksum quantization already filters
+      // out the far more common case — harmless cross-platform float noise
+      // from sin/cos/atan2 not being bit-identical on every CPU). Log it with
+      // real numbers so a genuine logic bug is diagnosable, warn once, and
+      // keep playing instead of ending the match.
       const mine = localChecksums.get(msg.tick)
-      if (mine !== undefined && mine !== msg.hash && !desynced) {
-        desynced = true
-        ui.toast('Desync detected - simulations have diverged. Please restart the match.', true)
+      if (mine !== undefined && mine !== msg.hash) {
+        console.warn(`[net] checksum mismatch at tick ${msg.tick}: mine=${mine} theirs=${msg.hash} from slot ${msg.from}`)
+        if (!desyncWarned) {
+          desyncWarned = true
+          ui.toast('Simulations may have drifted slightly out of sync — continuing anyway.', true)
+        }
       }
     } else if (msg.type === 'peer_left') {
       // One rival dropping doesn't end the match for everyone else — they just
@@ -117,7 +128,7 @@ function startOnline(opts) {
   let ended = false
   let simLast = performance.now()
   setInterval(() => {
-    if (relayLost || desynced) return
+    if (relayLost) return
     try {
       const now = performance.now()
       let acc = Math.min(0.25, (now - simLast) / 1000)

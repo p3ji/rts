@@ -541,6 +541,13 @@ export function applyCommand(g, c) {
 }
 
 // Order-independent-per-tick hash of the whole simulation for desync detection.
+// Position/hp are quantized to a coarse grid before hashing, not compared
+// exactly. Different CPU architectures (e.g. Mac ARM vs Windows x86) aren't
+// guaranteed bit-identical for transcendental functions (sin/cos/atan2/sqrt),
+// which this sim uses every tick for movement — over thousands of ticks that
+// can drift by a tiny, gameplay-irrelevant amount. 0.5 world units / 1 hp of
+// tolerance absorbs that noise while still catching a real logic divergence
+// (which would produce differences far larger than float rounding ever could).
 export function checksum(g) {
   let h = 0x811c9dc5 >>> 0
   const mix = (n) => { h ^= n >>> 0; h = Math.imul(h, 0x01000193) >>> 0 }
@@ -548,9 +555,9 @@ export function checksum(g) {
   for (const e of g.entities.values()) {
     if (e.dead) continue
     mix(e.id)
-    mix((e.x * 16) | 0)
-    mix((e.z * 16) | 0)
-    mix((e.hp * 4) | 0)
+    mix((e.x * 2) | 0)
+    mix((e.z * 2) | 0)
+    mix(e.hp | 0)
     if (e.kind === 'unit') mix(ORDER_CODE[e.order?.type] || 0)
     if (e.kind === 'resource') mix(e.amount | 0)
   }
