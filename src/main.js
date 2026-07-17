@@ -41,15 +41,20 @@ function start(opts) {
   let simLast = performance.now()
   setInterval(() => {
     if (game.paused) { simLast = performance.now(); return }
-    const now = performance.now()
-    let acc = Math.min(0.25, (now - simLast) / 1000)
-    simLast = now
-    while (acc >= FIXED_DT) {
-      tick(game, FIXED_DT)
-      acc -= FIXED_DT
+    try {
+      const now = performance.now()
+      let acc = Math.min(0.25, (now - simLast) / 1000)
+      simLast = now
+      while (acc >= FIXED_DT) {
+        tick(game, FIXED_DT)
+        acc -= FIXED_DT
+      }
+      simLast -= acc * 1000
+      if (game.over && !ended) { ended = true; ui.showEnd(game.over) }
+    } catch (err) {
+      console.error('[sim] tick error:', err)
+      simLast = performance.now() // don't let a huge stale gap pile up on the next firing
     }
-    simLast -= acc * 1000
-    if (game.over && !ended) { ended = true; ui.showEnd(game.over) }
   }, 1000 * FIXED_DT)
 
   runRenderLoop(game, renderer, input, ui)
@@ -113,40 +118,45 @@ function startOnline(opts) {
   let simLast = performance.now()
   setInterval(() => {
     if (relayLost || desynced) return
-    const now = performance.now()
-    let acc = Math.min(0.25, (now - simLast) / 1000)
-    simLast = now
+    try {
+      const now = performance.now()
+      let acc = Math.min(0.25, (now - simLast) / 1000)
+      simLast = now
 
-    while (acc >= FIXED_DT) {
-      tick(game, FIXED_DT)
-      net$.ticksProcessed++
-      if (game.tick % CHECKSUM_INTERVAL === 0) {
-        const h = checksum(game)
-        localChecksums.set(game.tick, h)
-        if (localChecksums.size > 600) {
-          for (const k of localChecksums.keys()) {
-            if (k < game.tick - 600) localChecksums.delete(k)
-            else break
+      while (acc >= FIXED_DT) {
+        tick(game, FIXED_DT)
+        net$.ticksProcessed++
+        if (game.tick % CHECKSUM_INTERVAL === 0) {
+          const h = checksum(game)
+          localChecksums.set(game.tick, h)
+          if (localChecksums.size > 600) {
+            for (const k of localChecksums.keys()) {
+              if (k < game.tick - 600) localChecksums.delete(k)
+              else break
+            }
           }
+          net.sendChecksum(game.tick, h)
         }
-        net.sendChecksum(game.tick, h)
+        acc -= FIXED_DT
       }
-      acc -= FIXED_DT
-    }
-    simLast -= acc * 1000
+      simLast -= acc * 1000
 
-    const windowMs = now - net$.windowStart
-    if (windowMs >= NET_REPORT_INTERVAL) {
-      const expectedTicks = Math.round(windowMs / (1000 * FIXED_DT))
-      console.log(`[net] tick=${game.tick} | ticks ${net$.ticksProcessed}/${expectedTicks} expected | late commands ${net$.lateCommands} (worst ${net$.maxLateTicks} ticks)`)
-      if (net$.lateCommands) ui.toast(`Network delay exceeded the 0.5s buffer (${net$.lateCommands} late action${net$.lateCommands > 1 ? 's' : ''}).`, true)
-      net$.lateCommands = 0
-      net$.maxLateTicks = 0
-      net$.ticksProcessed = 0
-      net$.windowStart = now
-    }
+      const windowMs = now - net$.windowStart
+      if (windowMs >= NET_REPORT_INTERVAL) {
+        const expectedTicks = Math.round(windowMs / (1000 * FIXED_DT))
+        console.log(`[net] tick=${game.tick} | ticks ${net$.ticksProcessed}/${expectedTicks} expected | late commands ${net$.lateCommands} (worst ${net$.maxLateTicks} ticks)`)
+        if (net$.lateCommands) ui.toast(`Network delay exceeded the 0.5s buffer (${net$.lateCommands} late action${net$.lateCommands > 1 ? 's' : ''}).`, true)
+        net$.lateCommands = 0
+        net$.maxLateTicks = 0
+        net$.ticksProcessed = 0
+        net$.windowStart = now
+      }
 
-    if (game.over && !ended) { ended = true; ui.showEnd(game.over) }
+      if (game.over && !ended) { ended = true; ui.showEnd(game.over) }
+    } catch (err) {
+      console.error('[sim] online tick error:', err)
+      simLast = performance.now()
+    }
   }, 1000 * FIXED_DT)
 
   runRenderLoop(game, renderer, input, ui)
@@ -172,13 +182,27 @@ function wireGame(game) {
 
 function runRenderLoop(game, renderer, input, ui) {
   let last = performance.now()
+  let warnedOnce = false
   function frame(now) {
-    const dt = Math.min(0.1, (now - last) / 1000)
-    last = now
-    input.update(dt)
-    renderer.sync()
-    ui.update(input.selected)
-    renderer.render()
+    // requestAnimationFrame(frame) below only runs if everything above it
+    // completes without throwing — an uncaught error anywhere in this chain
+    // silently kills rendering forever (no more frames ever get scheduled)
+    // while everything else on the page (setInterval sim ticks, click
+    // handlers) keeps working fine, since they don't depend on this chain.
+    // That "visuals frozen, page still responsive" signature is exactly what
+    // got reported from one player's machine — wrapping this so one bad
+    // frame can't permanently end the game for them.
+    try {
+      const dt = Math.min(0.1, (now - last) / 1000)
+      last = now
+      input.update(dt)
+      renderer.sync()
+      ui.update(input.selected)
+      renderer.render()
+    } catch (err) {
+      console.error('[render] frame error (rendering will keep retrying):', err)
+      if (!warnedOnce) { warnedOnce = true; ui.toast('A rendering error occurred — check the console. Trying to keep going.', true) }
+    }
     requestAnimationFrame(frame)
   }
   requestAnimationFrame(frame)
