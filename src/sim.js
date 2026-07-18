@@ -18,7 +18,12 @@ export function tick(g, dt) {
   // apply any player commands scheduled for this exact tick (see issue/applyCommand)
   const batch = g.commandsByTick.get(g.tick)
   if (batch) {
-    batch.sort((a, b) => (a.p ?? 0) - (b.p ?? 0))
+    const n = g.players.length
+    batch.sort((a, b) => {
+      const ap = (a.p ?? 0) + g.tick
+      const bp = (b.p ?? 0) + g.tick
+      return (ap % n) - (bp % n)
+    })
     for (const c of batch) applyCommand(g, c)
     g.commandsByTick.delete(g.tick)
   }
