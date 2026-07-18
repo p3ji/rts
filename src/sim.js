@@ -17,7 +17,11 @@ export function tick(g, dt) {
 
   // apply any player commands scheduled for this exact tick (see issue/applyCommand)
   const batch = g.commandsByTick.get(g.tick)
-  if (batch) { for (const c of batch) applyCommand(g, c); g.commandsByTick.delete(g.tick) }
+  if (batch) {
+    batch.sort((a, b) => (a.p ?? 0) - (b.p ?? 0))
+    for (const c of batch) applyCommand(g, c)
+    g.commandsByTick.delete(g.tick)
+  }
 
   for (let i = 0; i < g.players.length; i++) if (g.players[i].isAI) aiThink(g, i, dt)
 
