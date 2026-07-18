@@ -124,19 +124,26 @@ export class UI {
     return s.trim() || '<span class="c-w">free</span>'
   }
 
-  signature(selected, inspected) {
-    if (!selected.length) return inspected ? `insp:${inspected.id}:${Math.ceil(inspected.amount)}` : 'empty'
+  actionSignature(selected, inspected) {
+    if (!selected.length) {
+      if (!inspected) return 'empty'
+      const isCapturing = inspected.kind === 'tower' && inspected.captureProgress > 0
+      return `insp:${inspected.id}:${inspected.owner}:${isCapturing ? 'C' : 'c'}`
+    }
     const f = selected[0]
     const p = this.game.players[this.me]
-    const parts = [selected.map((e) => e.id).join(','), f.constructing ? Math.round(f.progress * 20) : 'x',
-      Math.ceil(f.hp / 4), p.age, f.research ? Math.round(f.research.t) : '']
-    if (f.queue) parts.push(f.queue.map((q) => q.protoId).join('|'), f.queue[0]?.started ? Math.round(f.queue[0].t) : '')
-    parts.push(hasTemple(this.game, this.me) ? 'T' : 't')
+    const parts = [
+      selected.map((e) => e.id).join(','),
+      f.constructing ? 'C' : 'c',
+      p.age,
+      hasTemple(this.game, this.me) ? 'T' : 't',
+      p.ageUp ? 'A' : 'a'
+    ]
     return parts.join('#')
   }
 
   refresh(selected, inspected = null) {
-    this.panelSig = this.signature(selected, inspected)
+    this.panelSig = this.actionSignature(selected, inspected)
     this.tooltip.style.display = 'none'
     this.updateQueueStrip(selected)
     const panel = $('sel-panel')
@@ -197,8 +204,8 @@ export class UI {
       <img class="portrait" src="${portrait}" alt="">
       <div class="sel-info">
         <div class="sel-name">${countStr}</div>
-        <div class="sel-stats">${statsHtml}</div>
-        ${progressHtml}
+        <div class="sel-stats" id="sel-stats">${statsHtml}</div>
+        <div id="sel-progress">${progressHtml}</div>
         <div class="sel-desc">${proto.desc || ''}</div>
         ${extra}
         ${first.kind === 'unit' ? '<div class="ord-row" id="ord-row"></div>' : ''}
@@ -214,13 +221,18 @@ export class UI {
         { mode: 'move', icon: '🏃', label: 'Move', desc: 'Click a spot to walk there.' },
         { mode: 'attack', icon: '⚔', label: 'Attack', desc: 'Click an enemy to attack it, or ground to attack-move.' },
         { mode: 'patrol', icon: '🔁', label: 'Patrol', desc: 'Click a spot to patrol back and forth, engaging enemies along the way.' },
+        { mode: 'stop', icon: '🛑', label: 'Stop', desc: 'Stop moving and clear all orders.' },
       ]
       for (const o of orders) {
         const b = document.createElement('button')
         b.className = 'ordchip'
         b.innerHTML = o.icon
         this.attachTip(b, `<b>${o.label}</b><br><span class="tip-desc">${o.desc}</span>`)
-        b.onclick = () => { audio.click(); this.getInput().armOrder(o.mode) }
+        b.onclick = () => {
+          audio.click()
+          if (o.mode === 'stop') this.getInput().issueStop()
+          else this.getInput().armOrder(o.mode)
+        }
         row.appendChild(b)
       }
     }
@@ -246,7 +258,12 @@ export class UI {
             if (validBuildings.length > 1) {
               let minQ = 999
               for (const b2 of validBuildings) {
-                const qLen = b2.queue ? b2.queue.length : 0
+                let qLen = b2.queue ? b2.queue.length : 0
+                for (const cmds of this.game.commandsByTick.values()) {
+                  for (const c of cmds) {
+                    if (c.t === 'queue' && c.b === b2.id) qLen++
+                  }
+                }
                 if (qLen < minQ) { minQ = qLen; bestBuilding = b2 }
               }
             }
@@ -259,13 +276,19 @@ export class UI {
       // Age Up on the Town Center
       if (first.proto.kind === 'townhall' && playerAge < 2 && !constructing) {
         const temple = hasTemple(this.game, this.me)
-        const busy = !!first.research
+        const p = this.game.players[this.me]
+        const busy = !!p?.ageUp
         const locked = !temple || busy
         const b = this.actionBtn(PORTRAITS.temple, 'Advance to Age II', this.costStr(AGE_UP_COST), locked)
         b.classList.add('ageup')
+        
+        let lockText = ''
+        if (!temple) lockText = '<br><span class="tip-lock">🔒 Requires a Temple</span>'
+        else if (busy) lockText = '<br><span class="tip-lock">🔒 Already advancing to Age II</span>'
+
         this.attachTip(b, `<b>Advance to Age II</b><br>${this.costStr(AGE_UP_COST)} · ⏱ 45s<br>
           <span class="tip-desc">Upgrades all your buildings to Castle Age style and unlocks Knights, Priests and Catapults.</span>
-          ${!temple ? '<br><span class="tip-lock">🔒 Requires a Temple</span>' : ''}`)
+          ${lockText}`)
         if (!locked) {
           b.onclick = () => {
             if (!canAfford(this.game, this.me, AGE_UP_COST)) { this.toast('Not enough resources', true); return }
@@ -344,10 +367,10 @@ export class UI {
       <img class="portrait" src="${portrait}" alt="">
       <div class="sel-info">
         <div class="sel-name">${name}</div>
-        <div class="sel-stats">
+        <div class="sel-stats" id="sel-stats">
           <span class="stat">${isWood ? '🪵' : '🪙'} ${amountStr}</span>
         </div>
-        <div class="pbar"><div style="width:${pct}%"></div></div>
+        <div id="sel-progress"><div class="pbar"><div style="width:${pct}%"></div></div></div>
         <div class="sel-desc">${isWood
           ? 'Send villagers here to chop wood. A depleted forest is left as stumps.'
           : 'Send villagers here to mine gold. The vein is gone once fully mined.'}</div>
@@ -364,12 +387,12 @@ export class UI {
       <img class="portrait" src="${PORTRAITS.watchtower || ''}" alt="">
       <div class="sel-info">
         <div class="sel-name">${e.proto.name}</div>
-        <div class="sel-stats">
+        <div class="sel-stats" id="sel-stats">
           <span class="stat">❤ ${Math.ceil(e.hp)}/${e.maxHp}</span>
           <span class="stat" style="${owned ? `color:${hex(PLAYER_COLORS[e.owner])}` : ''}">${owned ? '🚩' : '⚪'} ${ownerName}</span>
           ${owned ? `<span class="stat">🪙 +${e.proto.goldPerSec}/s</span>` : ''}
         </div>
-        ${capturing ? `<div class="pbar"><div style="width:${capPct}%"></div></div><div class="sel-stats"><span class="stat warn">Capturing… ${capPct}%</span></div>` : ''}
+        <div id="sel-progress">${capturing ? `<div class="pbar"><div style="width:${capPct}%"></div></div><div class="sel-stats"><span class="stat warn">Capturing… ${capPct}%</span></div>` : ''}</div>
         <div class="sel-desc">${e.proto.desc}</div>
       </div>`
   }
@@ -482,7 +505,86 @@ export class UI {
     this.drawMinimap()
     this.drainEvents()
     const inspected = selected.length ? null : this.getInput().inspected
-    if (this.signature(selected, inspected) !== this.panelSig) this.refresh(selected, inspected)
+    const actionSig = this.actionSignature(selected, inspected)
+    if (actionSig !== this.panelSig) {
+      this.refresh(selected, inspected)
+    } else {
+      this.updateDynamicValues(selected, inspected)
+    }
+  }
+
+  updateDynamicValues(selected, inspected) {
+    if (!selected.length) {
+      if (inspected && !inspected.dead) {
+        if (inspected.kind === 'resource') {
+          const statsEl = $('sel-stats')
+          const pbarEl = $('sel-progress')
+          if (statsEl && pbarEl) {
+            const isWood = inspected.rtype === 'wood'
+            const infinite = !isFinite(inspected.maxAmount)
+            const depleted = inspected.amount <= 0
+            const amountStr = infinite ? '∞' : depleted ? 'Depleted' : `${Math.ceil(inspected.amount)} / ${inspected.maxAmount}`
+            statsEl.innerHTML = `<span class="stat">${isWood ? '🪵' : '🪙'} ${amountStr}</span>`
+            const pct = infinite ? 100 : Math.max(0, Math.round((inspected.amount / inspected.maxAmount) * 100))
+            pbarEl.innerHTML = `<div class="pbar"><div style="width:${pct}%"></div></div>`
+          }
+        } else if (inspected.kind === 'tower') {
+          const statsEl = $('sel-stats')
+          if (statsEl) {
+            const owned = inspected.owner >= 0
+            const ownerName = owned ? this.game.players[inspected.owner].name : 'Unclaimed'
+            statsEl.innerHTML = `
+              <span class="stat">❤ ${Math.ceil(inspected.hp)}/${inspected.maxHp}</span>
+              <span class="stat" style="${owned ? `color:${hex(PLAYER_COLORS[inspected.owner])}` : ''}">${owned ? '🚩' : '⚪'} ${ownerName}</span>
+              ${owned ? `<span class="stat">🪙 +${inspected.proto.goldPerSec}/s</span>` : ''}
+            `
+          }
+          const pbarEl = $('sel-progress')
+          if (pbarEl) {
+            const capturing = inspected.captureProgress > 0
+            const capPct = capturing ? Math.round((inspected.captureProgress / inspected.proto.captureTime) * 100) : 0
+            pbarEl.innerHTML = capturing ? `<div class="pbar"><div style="width:${capPct}%"></div></div><div class="sel-stats"><span class="stat warn">Capturing… ${capPct}%</span></div>` : ''
+          }
+        }
+      }
+      return
+    }
+
+    const first = selected[0]
+    const proto = first.proto
+
+    const statsEl = $('sel-stats')
+    if (statsEl) {
+      let statsHtml = ''
+      if (first.kind === 'unit') {
+        statsHtml = `<span class="stat">❤ ${Math.ceil(first.hp)}/${first.maxHp}</span>` +
+          (proto.dmg ? `<span class="stat">⚔ ${proto.dmg}</span>` : '') +
+          `<span class="stat role">${proto.role}</span>`
+      } else {
+        statsHtml = `<span class="stat">❤ ${Math.ceil(first.hp)}/${first.maxHp}</span>`
+        if (first.constructing) {
+          statsHtml += `<span class="stat warn">🔨 Under construction</span>`
+        } else if (first.research) {
+          statsHtml += `<span class="stat warn">📜 Advancing to Age II</span>`
+        }
+      }
+      statsEl.innerHTML = statsHtml
+    }
+
+    const progEl = $('sel-progress')
+    if (progEl) {
+      let progressHtml = ''
+      if (first.kind === 'building') {
+        if (first.constructing) {
+          progressHtml = `<div class="pbar"><div style="width:${Math.round(first.progress * 100)}%"></div></div>`
+        } else if (first.research) {
+          progressHtml = `<div class="pbar"><div style="width:${Math.round((1 - first.research.t / first.research.total) * 100)}%"></div></div>`
+        }
+      }
+      progEl.innerHTML = progressHtml
+    }
+
+    this.updateQueueStrip(selected)
   }
 }
 
@@ -511,6 +613,7 @@ export function homeScreen(onStart) {
   const diffWrap = $('opt-diff')
   diffWrap.innerHTML = ''
   for (const key of Object.keys(DIFFICULTY)) {
+    if (key === 'globals') continue
     const b = document.createElement('button')
     b.className = 'opt' + (key === difficulty ? ' sel' : '')
     b.textContent = DIFFICULTY[key].name

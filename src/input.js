@@ -134,6 +134,13 @@ export class Input {
     this.ui.toast(`${mode[0].toUpperCase()}${mode.slice(1)} — click a target (right-click/Esc to cancel)`)
   }
 
+  issueStop() {
+    const units = this.selected.filter((u) => u.kind === 'unit' && !u.dead)
+    if (!units.length) return
+    issue(this.game, { t: 'stop', p: this.game.localPlayer, units: ids(units) })
+    this.ui.refresh(this.selected)
+  }
+
   confirmOrderMode(n) {
     const g = this.game, me = g.localPlayer
     const mode = this.orderMode

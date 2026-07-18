@@ -67,7 +67,26 @@ function start(opts) {
 // heartbeat gate: that design freezes every player whenever Wi-Fi has a transient
 // delayed packet. The 500ms command buffer absorbs normal LAN jitter while each
 // client keeps its simulation and rendering fluid. Checksums still detect a real
-// late-command desync instead of hiding it.
+function canTick(game) {
+  if (!game.isOnline) return true
+  const nextTick = game.tick + 1
+  const slotCount = game.players.length
+  
+  const slotMap = game.receivedCommands.get(nextTick)
+  if (!slotMap) return false
+  
+  for (let i = 0; i < slotCount; i++) {
+    if (!game.players[i].isAI && !game.players[i].disconnected && !slotMap.has(i)) {
+      return false
+    }
+  }
+  return true
+}
+
+// Every peer runs the same deterministic simulation. A player command is tagged for
+// execution 15 ticks in the future. We run a deterministic lockstep engine: the
+// simulation pauses momentarily if a client is missing inputs for the current tick,
+// and catches up instantly once they arrive.
 function startOnline(opts) {
   const { net, seed, slot, mapSettings, playerCount } = opts
   const game = createGame({ humanCount: playerCount, aiCount: 0, difficulty: 'normal', seed, mapSettings })
@@ -80,18 +99,32 @@ function startOnline(opts) {
   const localChecksums = new Map()
   const net$ = { lateCommands: 0, maxLateTicks: 0, ticksProcessed: 0, windowStart: performance.now() }
 
-  game.onCommand = (execTick, cmd) => net.sendCommand(execTick, cmd)
+  // Send initial heartbeats for the buffer window and mark them received locally
+  for (let t = 1; t <= ONLINE_INPUT_DELAY; t++) {
+    net.sendHeartbeat(t)
+    if (!game.receivedCommands.has(t)) {
+      game.receivedCommands.set(t, new Map())
+    }
+    game.receivedCommands.get(t).set(slot, [])
+  }
+
+  game.onTickEnd = (execTick, cmds) => {
+    net.sendCommand(execTick, cmds)
+    if (!game.receivedCommands.has(execTick)) {
+      game.receivedCommands.set(execTick, new Map())
+    }
+    game.receivedCommands.get(execTick).set(slot, cmds)
+  }
 
   const { renderer, input, ui } = wireGame(game)
 
   net.onMessage = (msg) => {
     if (msg.type === 'cmd') {
-      for (const cmd of msg.cmds) scheduleAt(game, msg.tick, cmd)
-      if (msg.cmds.length && msg.tick <= game.tick) {
-        const lateBy = game.tick - msg.tick + 1
-        net$.lateCommands++
-        net$.maxLateTicks = Math.max(net$.maxLateTicks, lateBy)
+      if (!game.receivedCommands.has(msg.tick)) {
+        game.receivedCommands.set(msg.tick, new Map())
       }
+      game.receivedCommands.get(msg.tick).set(msg.from, msg.cmds)
+      for (const cmd of msg.cmds) scheduleAt(game, msg.tick, cmd)
     } else if (msg.type === 'checksum') {
       // A mismatch here used to halt the match outright. For a casual game
       // that's a worse failure mode than it sounds: a stopped match is
@@ -110,8 +143,9 @@ function startOnline(opts) {
         }
       }
     } else if (msg.type === 'peer_left') {
-      // One rival dropping doesn't end the match for everyone else — they just
-      // stop sending commands, same as an AFK player; the sim keeps going.
+      if (game.players[msg.slot]) {
+        game.players[msg.slot].disconnected = true
+      }
       ui.toast(`${game.players[msg.slot]?.name ?? 'A rival'} disconnected.`, true)
     }
   }
@@ -131,11 +165,34 @@ function startOnline(opts) {
     if (relayLost) return
     try {
       const now = performance.now()
-      let acc = Math.min(0.25, (now - simLast) / 1000)
+      let acc = Math.min(5.0, (now - simLast) / 1000)
       simLast = now
 
+      if (!canTick(game)) {
+        if (!game.waitingSince) game.waitingSince = now
+        else if (now - game.waitingSince > 5000) {
+          const nextTick = game.tick + 1
+          const slotMap = game.receivedCommands.get(nextTick)
+          for (let i = 0; i < game.players.length; i++) {
+            if (!game.players[i].isAI && !game.players[i].disconnected) {
+              if (!slotMap || !slotMap.has(i)) {
+                game.players[i].disconnected = true
+                ui.toast(`${game.players[i].name} timed out and was dropped.`, true)
+              }
+            }
+          }
+          game.waitingSince = null
+        }
+      } else {
+        game.waitingSince = null
+      }
+
       while (acc >= FIXED_DT) {
+        if (!canTick(game)) {
+          break
+        }
         tick(game, FIXED_DT)
+        game.receivedCommands.delete(game.tick)
         net$.ticksProcessed++
         if (game.tick % CHECKSUM_INTERVAL === 0) {
           const h = checksum(game)

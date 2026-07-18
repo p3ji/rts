@@ -1,0 +1,93 @@
+{
+  "towncenter": {
+    "name": "Town Center",
+    "kind": "townhall",
+    "age": 1,
+    "cost": { "w": 275, "g": 125 },
+    "buildTime": 55,
+    "hp": 1800,
+    "radius": 5,
+    "supply": 12,
+    "dropoff": true,
+    "trains": ["villager"],
+    "desc": "Heart of the kingdom. Trains villagers, accepts resources, and researches the next Age."
+  },
+  "farm": {
+    "name": "Farm",
+    "kind": "supply",
+    "age": 1,
+    "cost": { "w": 45 },
+    "buildTime": 14,
+    "hp": 250,
+    "radius": 2.6,
+    "supply": 16,
+    "desc": "+16 supply. Golden wheat, tended by nobody in particular."
+  },
+  "barracks": {
+    "name": "Barracks",
+    "kind": "production",
+    "age": 1,
+    "cost": { "w": 120 },
+    "buildTime": 26,
+    "hp": 900,
+    "radius": 3.6,
+    "trains": ["swordsman", "knight"],
+    "desc": "Trains Swordsmen — and Knights once you reach Age II."
+  },
+  "archery": {
+    "name": "Archery Range",
+    "kind": "production",
+    "age": 1,
+    "cost": { "w": 130 },
+    "buildTime": 26,
+    "hp": 800,
+    "radius": 3.6,
+    "trains": ["archer", "catapult"],
+    "desc": "Trains Archers — and Catapults once you reach Age II."
+  },
+  "storage": {
+    "name": "Storehouse",
+    "kind": "dropoff",
+    "age": 1,
+    "cost": { "w": 75 },
+    "buildTime": 16,
+    "hp": 500,
+    "radius": 2.6,
+    "dropoff": true,
+    "desc": "Resource drop-off point. Build near forests and gold to shorten trips."
+  },
+  "watchtower": {
+    "name": "Watchtower",
+    "kind": "turret",
+    "age": 1,
+    "cost": { "w": 90, "g": 35 },
+    "buildTime": 24,
+    "hp": 550,
+    "radius": 1.9,
+    "dmg": 13,
+    "range": 15,
+    "atkCd": 1.4,
+    "desc": "Fires arrows at enemies in range. Anchors your defense."
+  },
+  "temple": {
+    "name": "Temple",
+    "kind": "tech",
+    "age": 1,
+    "cost": { "w": 90, "g": 70 },
+    "buildTime": 30,
+    "hp": 700,
+    "radius": 3.2,
+    "trains": ["priest"],
+    "desc": "Required to advance to Age II. Trains Priests in Age II."
+  },
+  "wall": {
+    "name": "Wall",
+    "kind": "wall",
+    "age": 1,
+    "cost": { "w": 5 },
+    "buildTime": 8,
+    "hp": 400,
+    "radius": 1.0,
+    "desc": "A sturdy stone barrier to protect your kingdom."
+  }
+}

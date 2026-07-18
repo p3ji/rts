@@ -1,0 +1,40 @@
+{
+  "easy": {
+    "name": "Easy",
+    "workers": 25,
+    "armyCap": 25,
+    "waveFirst": 330,
+    "waveEvery": 150,
+    "waveStart": 6,
+    "waveGrow": 3,
+    "incomeMul": 0.8,
+    "ageAt": 420
+  },
+  "normal": {
+    "name": "Normal",
+    "workers": 35,
+    "armyCap": 45,
+    "waveFirst": 250,
+    "waveEvery": 115,
+    "waveStart": 8,
+    "waveGrow": 5,
+    "incomeMul": 1.0,
+    "ageAt": 330
+  },
+  "hard": {
+    "name": "Hard",
+    "workers": 45,
+    "armyCap": 65,
+    "waveFirst": 190,
+    "waveEvery": 90,
+    "waveStart": 10,
+    "waveGrow": 7,
+    "incomeMul": 1.3,
+    "ageAt": 260
+  },
+  "globals": {
+    "name": "Global Settings",
+    "separationFriendly": 1.75,
+    "separationHostile": 1.1
+  }
+}

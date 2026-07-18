@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RTS Data Editor</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a1a; color: #ddd; margin: 0; padding: 20px; }
+    h1 { color: #f0c04a; text-align: center; }
+    .container { max-width: 1000px; margin: 0 auto; }
+    .card { background: #2a2a2a; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+    h2 { color: #a8e86a; border-bottom: 1px solid #444; padding-bottom: 10px; margin-top: 0; }
+    
+    .table-wrapper { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+    th, td { padding: 10px; text-align: left; border-bottom: 1px solid #333; }
+    th { color: #cdbfa0; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 1px; }
+    
+    input[type="number"] {
+      width: 70px; padding: 5px; background: #111; color: #fff; border: 1px solid #555; border-radius: 4px;
+    }
+    input[type="number"]:focus { border-color: #f0c04a; outline: none; }
+    
+    .btn-row { display: flex; gap: 15px; justify-content: center; margin-top: 30px; }
+    button {
+      padding: 12px 24px; font-size: 16px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-save { background: #d8a52e; color: #111; }
+    .btn-save:hover { background: #f0c04a; }
+    .btn-push { background: #3e7fe8; color: #fff; }
+    .btn-push:hover { background: #5c94ef; }
+    
+    #toast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #222;
+      color: #a8e86a; padding: 15px 25px; border-radius: 8px; font-weight: bold;
+      border: 1px solid #444; display: none; box-shadow: 0 10px 20px rgba(0,0,0,0.5); z-index: 100;
+    }
+    #toast.show { display: block; animation: fadein 0.3s; }
+    
+    @keyframes fadein { from { opacity: 0; transform: translate(-50%, 20px); } to { opacity: 1; transform: translate(-50%, 0); } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Game Balance Editor</h1>
+    
+    <div class="card">
+      <h2>Units</h2>
+      <div class="table-wrapper">
+        <table id="units-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>HP</th>
+              <th>Damage</th>
+              <th>Range</th>
+              <th>Speed</th>
+              <th>Build Time</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    
+    <div class="card">
+      <h2>Buildings</h2>
+      <div class="table-wrapper">
+        <table id="buildings-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>HP</th>
+              <th>Damage</th>
+              <th>Range</th>
+              <th>Build Time</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    
+    <div class="card">
+      <h2>AI Difficulty</h2>
+      <div class="table-wrapper">
+        <table id="difficulty-table">
+          <thead>
+            <tr>
+              <th>Level</th>
+              <th>Workers</th>
+              <th>Army Cap</th>
+              <th>Wave First</th>
+              <th>Wave Every</th>
+              <th>Wave Start</th>
+              <th>Wave Grow</th>
+              <th>Income Mul</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    
+    <div class="card">
+      <h2>Global Simulation Settings</h2>
+      <div class="globals-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #cdbfa0;">Friendly Separation Scale</label>
+          <input type="number" id="global-sep-friendly" step="0.05" style="width: 100px;">
+          <div style="font-size: 12px; color: #888; margin-top: 5px;">Minimum spacing between units in your own army. (Default: 1.75)</div>
+        </div>
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #cdbfa0;">Hostile Separation Scale</label>
+          <input type="number" id="global-sep-hostile" step="0.05" style="width: 100px;">
+          <div style="font-size: 12px; color: #888; margin-top: 5px;">Minimum spacing between opposing units in combat. (Default: 1.1)</div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="btn-row">
+      <button class="btn-save" id="btn-save">Save Locally</button>
+      <button class="btn-push" id="btn-push">Push to GitHub</button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script type="module" src="/src/editor.js"></script>
+</body>
+</html>

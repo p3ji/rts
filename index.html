@@ -257,6 +257,14 @@
       text-transform: uppercase; cursor: pointer;
     }
     .modetab.sel { background: rgba(30,24,13,0.92); color: #ffe9b0; border-color: #8a6f3e; }
+    .lan-instructions {
+      background: #17130a; border: 1px solid #4a3d26; border-radius: 8px; padding: 12px;
+      font-size: 13.5px; color: #b3a888; line-height: 1.5; display: flex; flex-direction: column; gap: 8px;
+    }
+    .lan-instructions b { color: #d8a52e; }
+    .lan-instructions a { color: #f0c04a; text-decoration: none; }
+    .lan-instructions a:hover { text-decoration: underline; }
+    .lan-instructions code { background: #241d0f; padding: 2px 5px; border-radius: 4px; color: #e8dcc0; font-family: monospace; }
     .online-row { display: flex; gap: 10px; }
     .online-row .opt { flex: 1; }
     #online-relay {
@@ -373,7 +381,7 @@
 
     <div id="mode-tabs" class="modetabs" style="width: 420px;">
       <button class="modetab sel" id="tab-ai">Vs AI</button>
-      <button class="modetab" id="tab-online">Online 1v1</button>
+      <button class="modetab" id="tab-online">LAN</button>
     </div>
 
     <div class="setup-card" id="card-ai">
@@ -390,7 +398,11 @@
 
     <div class="setup-card" id="card-online" style="display:none;">
       <div class="setup-row" id="online-choice">
-        <label>Play with a friend</label>
+        <label>Play with a friend on LAN</label>
+        <div class="lan-instructions">
+          <p><b>Host:</b> Download and run the <a href="/relay-server.zip" download>relay-server</a> on your computer. Enter your local IP address (e.g. <code>ws://192.168.1.5:8787</code>) in the Relay Server box below.</p>
+          <p><b>Joiner:</b> Enter the Host's local IP address in the Relay Server box below.</p>
+        </div>
         <div class="online-row">
           <button class="opt" id="btn-host">Host a match</button>
           <button class="opt" id="btn-join">Join with code</button>

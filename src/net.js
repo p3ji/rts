@@ -39,7 +39,7 @@ export class NetClient {
   host(mapSettings) { this.send({ type: 'host', mapSettings }) }
   join(code) { this.send({ type: 'join', code }) }
   startMatch() { this.send({ type: 'start_match' }) }
-  sendCommand(tick, cmd) { this.send({ type: 'cmd', tick, cmds: [cmd] }) }
+  sendCommand(tick, cmds) { this.send({ type: 'cmd', tick, cmds }) }
   sendHeartbeat(tick) { this.send({ type: 'cmd', tick, cmds: [] }) }
   sendChecksum(tick, hash) { this.send({ type: 'checksum', tick, hash }) }
 

@@ -1,4 +1,4 @@
-import { UNITS, BUILDINGS, AGE_UP_COST, AGE_UP_TIME, SUPPLY_CAP } from './data.js'
+import { UNITS, BUILDINGS, AGE_UP_COST, AGE_UP_TIME, SUPPLY_CAP, DIFFICULTY } from './data.js'
 import {
   MAP, dist, each, findNearest, supplyOf, hasTemple, ageOf,
   canAfford, pay, spawnUnit, spawnBuilding, autoGather, blockedByObstacle, updateVision,
@@ -49,6 +49,12 @@ export function tick(g, dt) {
     g.fog.visT += dt
     if (g.fog.visT >= VISION_INTERVAL) { g.fog.visT = 0; updateVision(g) }
   }
+  
+  if (g.isOnline) {
+    const et = g.tick + g.inputDelay
+    g.onTickEnd?.(et, g.localCommandsThisTick)
+    g.localCommandsThisTick = []
+  }
 }
 
 // ---- units -----------------------------------------------------------------
@@ -69,6 +75,9 @@ function unitTick(g, u, dt) {
       }
       break
     }
+    case 'stop':
+      // do absolutely nothing, not even auto-aggro, to ensure they stand ground
+      break
     case 'move': {
       if (arrive(g, u, o.x, o.z, 0.6, dt)) popOrder(u)
       break
@@ -115,7 +124,7 @@ function unitTick(g, u, dt) {
           site.constructing = false
           g.events.push({ type: 'complete', id: site.id, owner: site.owner })
           popOrder(u)
-          if (u.proto.worker) autoGather(g, u)
+          if (u.proto.worker && u.order.type === 'idle') autoGather(g, u)
         }
       }
       break
@@ -253,7 +262,12 @@ function separation(g) {
     for (let j = i + 1; j < units.length; j++) {
       const b = units[j]
       const dx = b.x - a.x, dz = b.z - a.z
-      const rr = a.proto.radius + b.proto.radius
+      const sameOwner = a.owner === b.owner
+      const friendlyMul = DIFFICULTY.globals?.separationFriendly ?? 1.75
+      const hostileMul = DIFFICULTY.globals?.separationHostile ?? 1.1
+      const rr = sameOwner
+        ? (a.proto.radius + b.proto.radius) * friendlyMul
+        : (a.proto.radius + b.proto.radius) * hostileMul
       const d2 = dx * dx + dz * dz
       if (d2 > rr * rr || d2 < 1e-6) continue
       const d = Math.sqrt(d2)
@@ -311,6 +325,12 @@ function applyHit(g, src, e, dmg) {
 function kill(g, e) {
   e.dead = true
   g.events.push({ type: 'death', id: e.id, x: e.x, z: e.z, kind: e.kind })
+  if (e.research) {
+    const p = g.players[e.owner]
+    if (p && p.ageUp === e.research) {
+      p.ageUp = null
+    }
+  }
 }
 
 // ---- buildings -------------------------------------------------------------
@@ -469,7 +489,11 @@ function winCheck(g) {
 export function issue(g, cmd) {
   const et = g.tick + g.inputDelay
   scheduleAt(g, et, cmd)
-  g.onCommand?.(et, cmd)
+  if (g.isOnline) {
+    g.localCommandsThisTick.push(cmd)
+  } else {
+    g.onCommand?.(et, cmd)
+  }
   return et
 }
 
@@ -513,6 +537,11 @@ export function applyCommand(g, c) {
     case 'patrol': {
       const u = resolveUnits(g, c.units)
       u.forEach((w) => { w.order = { type: 'patrol', ax: w.x, az: w.z, bx: c.x, bz: c.z, toB: true } })
+      break
+    }
+    case 'stop': {
+      const u = resolveUnits(g, c.units)
+      if (u.length) cmdStop(g, u)
       break
     }
     case 'build': {
@@ -565,7 +594,7 @@ export function checksum(g) {
   return h >>> 0
 }
 
-const ORDER_CODE = { idle: 1, move: 2, attackmove: 3, attack: 4, gather: 5, return: 6, build: 7, repair: 8, patrol: 9 }
+const ORDER_CODE = { idle: 1, move: 2, attackmove: 3, attack: 4, gather: 5, return: 6, build: 7, repair: 8, patrol: 9, stop: 10 }
 
 export function setOrder(u, ord, queue) {
   if (queue && u.order.type !== 'idle') {
@@ -585,6 +614,10 @@ export function popOrder(u, defaultOrder) {
 }
 
 // ---- commands (player + AI use the same API) --------------------------------
+
+export function cmdStop(g, units) {
+  units.forEach((u) => setOrder(u, { type: 'stop' }, false))
+}
 
 export function cmdMove(g, units, x, z, attackMove = false, queue = false) {
   const n = units.length
@@ -654,7 +687,7 @@ export function tryAgeUp(g, tc) {
   const owner = tc.owner
   const p = g.players[owner]
   if (p.age >= 2) return { ok: false, reason: 'Already in Age II' }
-  if (tc.research) return { ok: false, reason: 'Already researching' }
+  if (p.ageUp) return { ok: false, reason: 'Already researching' }
   if (!hasTemple(g, owner)) return { ok: false, reason: 'Requires a Temple' }
   if (!canAfford(g, owner, AGE_UP_COST)) return { ok: false, reason: 'Not enough resources' }
   pay(g, owner, AGE_UP_COST)
@@ -679,10 +712,8 @@ function aiThink(g, owner, dt) {
 
   const workers = listAI(g, owner, (e) => e.kind === 'unit' && e.proto.worker)
   const army = listAI(g, owner, (e) => e.kind === 'unit' && !e.proto.worker)
-  const barracks = findAI(g, owner, (e) => e.kind === 'building' && e.protoId === 'barracks' && !e.constructing)
-  const archery = findAI(g, owner, (e) => e.kind === 'building' && e.protoId === 'archery' && !e.constructing)
-  const anyBarracks = findAI(g, owner, (e) => e.kind === 'building' && e.protoId === 'barracks')
-  const anyArchery = findAI(g, owner, (e) => e.kind === 'building' && e.protoId === 'archery')
+  const barracksList = listAI(g, owner, (e) => e.kind === 'building' && e.protoId === 'barracks')
+  const archeryList = listAI(g, owner, (e) => e.kind === 'building' && e.protoId === 'archery')
   const temple = findAI(g, owner, (e) => e.kind === 'building' && e.protoId === 'temple')
   const sup = supplyOf(g, owner)
 
@@ -700,12 +731,14 @@ function aiThink(g, owner, dt) {
   }
 
   // military buildings
-  if (!anyBarracks && g.time > 60) aiBuild(g, owner, 'barracks', th, workers)
-  if (!anyArchery && g.time > 150) aiBuild(g, owner, 'archery', th, workers)
+  const desiredBarracks = p.w > 1000 ? 3 : p.w > 400 ? 2 : 1
+  const desiredArchery = p.w > 1200 ? 3 : p.w > 500 ? 2 : 1
+  if (barracksList.length < desiredBarracks && g.time > 60) aiBuild(g, owner, 'barracks', th, workers)
+  if (archeryList.length < desiredArchery && g.time > 150) aiBuild(g, owner, 'archery', th, workers)
 
   // temple + age up
   if (!temple && g.time > diff.ageAt - 90) aiBuild(g, owner, 'temple', th, workers)
-  if (p.age === 1 && g.time > diff.ageAt && temple && !temple.constructing && !th.research) {
+  if (p.age === 1 && g.time > diff.ageAt && temple && !temple.constructing && !p.ageUp) {
     tryAgeUp(g, th)
   }
 
@@ -724,14 +757,18 @@ function aiThink(g, owner, dt) {
 
   // army production
   if (army.length < diff.armyCap) {
-    if (barracks && barracks.queue.length < 2) {
-      const pick = p.age >= 2 && g.rng() > 0.5 ? 'knight' : 'swordsman'
-      tryQueueUnit(g, barracks, pick)
+    for (const b of barracksList) {
+      if (!b.constructing && b.queue.length < 2) {
+        const pick = p.age >= 2 && g.rng() > 0.5 ? 'knight' : 'swordsman'
+        tryQueueUnit(g, b, pick)
+      }
     }
-    if (archery && archery.queue.length < 2) {
-      const roll = g.rng()
-      const pick = p.age >= 2 && roll > 0.75 ? 'catapult' : 'archer'
-      tryQueueUnit(g, archery, pick)
+    for (const a of archeryList) {
+      if (!a.constructing && a.queue.length < 2) {
+        const roll = g.rng()
+        const pick = p.age >= 2 && roll > 0.75 ? 'catapult' : 'archer'
+        tryQueueUnit(g, a, pick)
+      }
     }
     if (p.age >= 2 && temple && !temple.constructing && temple.queue.length === 0 && g.rng() > 0.7) {
       tryQueueUnit(g, temple, 'priest')

@@ -41,6 +41,8 @@ export function createGame({ aiCount = 1, humanCount = 1, difficulty = 'normal',
     localPlayer: 0, // which player this client controls (host = 0, joiner = 1 online)
     inputDelay: 1, // ticks between issuing a command and it executing (raised for netplay)
     commandsByTick: new Map(), // execTick -> [command,...]
+    receivedCommands: new Map(),
+    localCommandsThisTick: [],
     difficulty,
     diff,
     entities: new Map(),
