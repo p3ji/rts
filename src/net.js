@@ -7,7 +7,7 @@ export function defaultRelayUrl() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     return `${proto}://${location.hostname}:8787`
   }
-  return 'wss://wobbleton-relay.onrender.com'
+  return 'wss://rtswobble.onrender.com'
 }
 
 export class NetClient {
