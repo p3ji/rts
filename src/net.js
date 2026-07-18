@@ -3,8 +3,11 @@
 // handshake. See sim.js issue()/scheduleAt() for how batches turn into commands.
 
 export function defaultRelayUrl() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${proto}://${location.hostname}:8787`
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.startsWith('192.168.')) {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+    return `${proto}://${location.hostname}:8787`
+  }
+  return 'wss://wobbleton-relay.onrender.com'
 }
 
 export class NetClient {
