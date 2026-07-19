@@ -141,6 +141,17 @@ export class Input {
     this.ui.refresh(this.selected)
   }
 
+  // After a resync snapshot every entity object was replaced; re-point the
+  // current selection at the new objects by id (applySnapshot preserved the
+  // selected flags, and control groups already store plain ids).
+  remapEntities() {
+    this.selected = this.selected
+      .map((e) => this.game.entities.get(e.id))
+      .filter((e) => e && !e.dead)
+    for (const e of this.selected) e.selected = true
+    this.ui.refresh(this.selected)
+  }
+
   confirmOrderMode(n) {
     const g = this.game, me = g.localPlayer
     const mode = this.orderMode

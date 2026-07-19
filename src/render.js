@@ -545,6 +545,14 @@ export class Renderer {
     this.meshes.set(e.id, this.buildMesh(e))
   }
 
+  // After a resync snapshot every entity object was replaced wholesale (and the
+  // usual spawn/death events were skipped), so rebuild every mesh from scratch.
+  rebuildAll() {
+    for (const grp of this.meshes.values()) this.scene.remove(grp)
+    this.meshes.clear()
+    each(this.game, (e) => this.meshes.set(e.id, this.buildMesh(e)))
+  }
+
   // ---- entity meshes -----------------------------------------------------------------
 
   buildMesh(e) {

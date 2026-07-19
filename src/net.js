@@ -43,8 +43,11 @@ export class NetClient {
   join(code) { this.send({ type: 'join', code }) }
   startMatch() { this.send({ type: 'start_match' }) }
   sendCommand(tick, cmds) { this.send({ type: 'cmd', tick, cmds }) }
-  sendHeartbeat(tick) { this.send({ type: 'cmd', tick, cmds: [] }) }
   sendChecksum(tick, hash) { this.send({ type: 'checksum', tick, hash }) }
+  // Self-healing resync: a drifted client asks the host (slot 0) for its full
+  // game state; the host answers with a snapshot addressed to that one slot.
+  requestState() { this.send({ type: 'state_req' }) }
+  sendState(to, snap) { this.send({ type: 'state', to, snap }) }
 
   close() {
     if (this.ws) { this.ws.onclose = null; this.ws.close(); this.ws = null }

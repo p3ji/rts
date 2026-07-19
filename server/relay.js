@@ -89,6 +89,23 @@ wss.on('connection', (ws) => {
       room.sockets.forEach((other, i) => { if (other && i !== ws.slot) send(other, { ...msg, from: ws.slot }) })
       return
     }
+
+    // self-healing resync: a drifted client asks the host (slot 0) for a full
+    // state snapshot, and the host answers exactly one target slot. Still pure
+    // relay — the payload is opaque here.
+    if (msg.type === 'state_req') {
+      const room = rooms.get(ws.room)
+      if (!room || ws.slot === 0) return
+      send(room.sockets[0], { ...msg, from: ws.slot })
+      return
+    }
+    if (msg.type === 'state') {
+      const room = rooms.get(ws.room)
+      if (!room || ws.slot !== 0) return
+      const target = room.sockets[msg.to]
+      if (target && msg.to !== 0) send(target, { ...msg, from: 0 })
+      return
+    }
   })
 
   ws.on('close', () => {

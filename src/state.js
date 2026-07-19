@@ -1,4 +1,5 @@
 import { UNITS, BUILDINGS, SUPPLY_CAP, PLAYER_COLORS, PLAYER_NAMES, DIFFICULTY, NEUTRAL_TOWER, TREASURE, RESOURCE_ABUNDANCE } from './data.js'
+import { dsin, dcos, datan2, dlen } from './dmath.js'
 
 export const DEFAULT_MAP_SETTINGS = { resourceAbundance: 'normal', towers: true, treasure: true }
 
@@ -13,12 +14,17 @@ export const FOG_N = Math.ceil(MAP / FOG_CELL)
 // Deterministic RNG so a seed reproduces the same map
 export function mulberry32(seed) {
   let a = seed >>> 0
-  return function () {
+  const f = function () {
     a |= 0; a = (a + 0x6d2b79f5) | 0
     let t = Math.imul(a ^ (a >>> 15), 1 | a)
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
+  // getState/setState let a resync snapshot carry the RNG's exact position so
+  // the receiving client draws the identical stream from that point on.
+  f.getState = () => a >>> 0
+  f.setState = (s) => { a = s >>> 0 }
+  return f
 }
 
 export function createGame({ aiCount = 1, humanCount = 1, difficulty = 'normal', seed = null, mapSettings = null } = {}) {
@@ -41,7 +47,6 @@ export function createGame({ aiCount = 1, humanCount = 1, difficulty = 'normal',
     localPlayer: 0, // which player this client controls (host = 0, joiner = 1 online)
     inputDelay: 1, // ticks between issuing a command and it executing (raised for netplay)
     commandsByTick: new Map(), // execTick -> [command,...]
-    receivedCommands: new Map(),
     localCommandsThisTick: [],
     difficulty,
     diff,
@@ -147,11 +152,11 @@ export function isExplored(g, wx, wz) {
 
 function generateMap(g, rnd, spawns) {
   const lim = MAP / 2 - 8
-  const nearSpawn = (x, z, r) => spawns.some(([sx, sz]) => Math.hypot(x - sx, z - sz) < r)
-  const nearObstacle = (x, z, pad) => g.obstacles.some((o) => Math.hypot(x - o.x, z - o.z) < o.r + pad)
+  const nearSpawn = (x, z, r) => spawns.some(([sx, sz]) => dlen(x - sx, z - sz) < r)
+  const nearObstacle = (x, z, pad) => g.obstacles.some((o) => dlen(x - o.x, z - o.z) < o.r + pad)
   const abundanceMul = (RESOURCE_ABUNDANCE[g.mapSettings.resourceAbundance] ?? RESOURCE_ABUNDANCE.normal).mul
   const featurePositions = [] // towers + treasure placed so far, just for spacing them out
-  const nearFeature = (x, z, pad) => featurePositions.some((f) => Math.hypot(x - f.x, z - f.z) < pad)
+  const nearFeature = (x, z, pad) => featurePositions.some((f) => dlen(x - f.x, z - f.z) < pad)
 
   // mountains — impassable terrain features
   const nMountains = 5 + Math.floor(rnd() * 4)
@@ -179,7 +184,7 @@ function generateMap(g, rnd, spawns) {
     const n = 3 + Math.floor(rnd() * 3)
     for (let k = 0; k < n; k++) {
       const a = rnd() * Math.PI * 2, rr = k === 0 ? 0 : 4.5 + rnd() * 4
-      const tx = x + Math.cos(a) * rr, tz = z + Math.sin(a) * rr
+      const tx = x + dcos(a) * rr, tz = z + dsin(a) * rr
       if (Math.abs(tx) > lim || Math.abs(tz) > lim || nearObstacle(tx, tz, 4)) continue
       spawnResource(g, 'wood', tx, tz, (350 + Math.floor(rnd() * 100)) * abundanceMul, { pine, rot: rnd() * Math.PI * 2 })
     }
@@ -252,24 +257,24 @@ function generateMap(g, rnd, spawns) {
 function setupBase(g, owner, x, z, rnd) {
   const abundanceMul = (RESOURCE_ABUNDANCE[g.mapSettings.resourceAbundance] ?? RESOURCE_ABUNDANCE.normal).mul
   const th = spawnBuilding(g, owner, 'towncenter', x, z, true)
-  const toward = Math.atan2(-z, -x) // toward map center
-  th.rally = { x: x + Math.cos(toward) * 9, z: z + Math.sin(toward) * 9 }
+  const toward = datan2(-z, -x) // toward map center
+  th.rally = { x: x + dcos(toward) * 9, z: z + dsin(toward) * 9 }
 
   // starting forest behind the base
-  const back = Math.atan2(z, x)
+  const back = datan2(z, x)
   for (let i = 0; i < 4; i++) {
     const a = back + (i - 1.5) * 0.38
     const r = 13 + (i % 2) * 3
-    spawnResource(g, 'wood', x + Math.cos(a) * r, z + Math.sin(a) * r, 420 * abundanceMul, { pine: i % 2 === 0, rot: rnd() * Math.PI * 2 })
+    spawnResource(g, 'wood', x + dcos(a) * r, z + dsin(a) * r, 420 * abundanceMul, { pine: i % 2 === 0, rot: rnd() * Math.PI * 2 })
   }
   // two gold piles flanking
   for (const s of [-1, 1]) {
     const a = back + s * 1.15
-    spawnResource(g, 'gold', x + Math.cos(a) * 12, z + Math.sin(a) * 12, 1000 * abundanceMul, { variant: Math.floor(rnd() * 3), rot: rnd() * Math.PI * 2 })
+    spawnResource(g, 'gold', x + dcos(a) * 12, z + dsin(a) * 12, 1000 * abundanceMul, { variant: Math.floor(rnd() * 3), rot: rnd() * Math.PI * 2 })
   }
   // starting villagers
   for (let i = 0; i < 4; i++) {
-    const u = spawnUnit(g, owner, 'villager', x + Math.cos(toward) * 7 + (i - 1.5) * 1.6, z + Math.sin(toward) * 7)
+    const u = spawnUnit(g, owner, 'villager', x + dcos(toward) * 7 + (i - 1.5) * 1.6, z + dsin(toward) * 7)
     autoGather(g, u)
   }
 }
@@ -353,7 +358,7 @@ export function spawnTreasure(g, x, z, gold) {
 
 // ---- queries ---------------------------------------------------------------
 
-export function dist(a, b) { const dx = a.x - b.x, dz = a.z - b.z; return Math.hypot(dx, dz) }
+export function dist(a, b) { const dx = a.x - b.x, dz = a.z - b.z; return Math.sqrt(dx * dx + dz * dz) }
 
 export function each(g, fn) { for (const e of g.entities.values()) if (!e.dead) fn(e) }
 
@@ -414,7 +419,91 @@ export function autoGather(g, u) {
 // Obstacle test for placement + movement
 export function blockedByObstacle(g, x, z, pad = 0) {
   for (const o of g.obstacles) {
-    if (Math.hypot(x - o.x, z - o.z) < o.r + pad) return o
+    if (dlen(x - o.x, z - o.z) < o.r + pad) return o
   }
   return null
+}
+
+// ---- resync snapshots -------------------------------------------------------
+// A checksum mismatch online is healed by the host serializing its whole sim
+// state and the drifted client swapping it in — no pausing, no lockstep gating.
+// Everything here must survive JSON round-tripping, so entity `proto` (shared
+// references into data.js) and `selected` (purely local UI state) are stripped
+// on the way out and rebuilt on the way in.
+
+function protoFor(e) {
+  if (e.kind === 'unit') return UNITS[e.protoId]
+  if (e.kind === 'building') return BUILDINGS[e.protoId]
+  if (e.kind === 'tower') return NEUTRAL_TOWER
+  if (e.kind === 'treasure') return TREASURE
+  return { name: e.rtype === 'wood' ? 'Forest' : 'Gold Deposit', radius: e.rtype === 'wood' ? 2.3 : 1.7 }
+}
+
+export function serializeGame(g) {
+  const entities = []
+  for (const e of g.entities.values()) {
+    if (e.dead) continue
+    const o = {}
+    for (const k in e) if (k !== 'proto' && k !== 'selected') o[k] = e[k]
+    entities.push(o)
+  }
+  return {
+    tick: g.tick,
+    time: g.time,
+    nextId: g.nextId,
+    over: g.over,
+    rng: g.rng.getState(),
+    players: g.players.map((p) => ({ ...p })),
+    entities,
+    // only commands still in the future can matter to the receiver
+    commands: [...g.commandsByTick.entries()].filter(([t]) => t > g.tick),
+  }
+}
+
+export function applySnapshot(g, snap) {
+  g.tick = snap.tick
+  g.time = snap.time
+  g.nextId = snap.nextId
+  g.over = snap.over
+  g.rng.setState(snap.rng)
+  snap.players.forEach((sp, i) => { if (g.players[i]) Object.assign(g.players[i], sp) })
+
+  const wasSelected = new Set()
+  for (const e of g.entities.values()) if (e.selected && !e.dead) wasSelected.add(e.id)
+  g.entities.clear()
+  for (const se of snap.entities) {
+    se.proto = protoFor(se)
+    se.selected = wasSelected.has(se.id)
+    g.entities.set(se.id, se)
+  }
+
+  // p.ageUp normally IS the researching town center's `research` object (sim
+  // code updates one and both see it); JSON duplicated them, so relink.
+  for (const p of g.players) p.ageUp = null
+  for (const e of g.entities.values()) {
+    if (e.kind === 'building' && e.research) g.players[e.owner].ageUp = e.research
+  }
+
+  // Adopt the host's future command schedule, then re-add any future commands
+  // this client knows about that the host hadn't received when it serialized
+  // (e.g. our own just-issued orders still in flight) — without duplicating
+  // entries both sides have.
+  const merged = new Map(snap.commands.map(([t, arr]) => [t, arr.slice()]))
+  for (const [t, arr] of g.commandsByTick) {
+    if (t <= snap.tick) continue
+    let dst = merged.get(t)
+    if (!dst) { dst = []; merged.set(t, dst) }
+    for (const c of arr) {
+      const key = JSON.stringify(c)
+      if (!dst.some((d) => JSON.stringify(d) === key)) dst.push(c)
+    }
+  }
+  g.commandsByTick = merged
+  g.localCommandsThisTick = []
+
+  // Pending render events reference pre-snapshot state; the renderer does a
+  // full mesh rebuild after a resync instead.
+  g.events.length = 0
+
+  updateVision(g)
 }

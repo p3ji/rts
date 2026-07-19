@@ -1,5 +1,5 @@
-import { createGame } from './state.js'
-import { tick, checksum, scheduleAt } from './sim.js'
+import { createGame, serializeGame, applySnapshot } from './state.js'
+import { tick, checksum, scheduleRemote } from './sim.js'
 import { Renderer, loadAssets, generatePortraits } from './render.js'
 import { Input } from './input.js'
 import { UI, homeScreen, showLoading } from './ui.js'
@@ -62,31 +62,17 @@ function start(opts) {
 
 // ---- online LAN party (2-4 players): buffered delayed-command simulation --------
 //
-// Every peer runs the same deterministic simulation. A player command is tagged for
-// execution 15 ticks in the future. This is intentionally *not* a strict per-tick
-// heartbeat gate: that design freezes every player whenever Wi-Fi has a transient
-// delayed packet. The 500ms command buffer absorbs normal LAN jitter while each
-// client keeps its simulation and rendering fluid. Checksums still detect a real
-function canTick(game) {
-  if (!game.isOnline) return true
-  const nextTick = game.tick + 1
-  const slotCount = game.players.length
-  
-  const slotMap = game.receivedCommands.get(nextTick)
-  if (!slotMap) return false
-  
-  for (let i = 0; i < slotCount; i++) {
-    if (!game.players[i].isAI && !game.players[i].disconnected && !slotMap.has(i)) {
-      return false
-    }
-  }
-  return true
-}
-
-// Every peer runs the same deterministic simulation. A player command is tagged for
-// execution 15 ticks in the future. We run a deterministic lockstep engine: the
-// simulation pauses momentarily if a client is missing inputs for the current tick,
-// and catches up instantly once they arrive.
+// Every peer runs the same deterministic simulation (all sim math goes through
+// dmath.js, so results are bit-identical on every browser). A player command is
+// tagged for execution 15 ticks (~0.5s) in the future, giving packets room to
+// arrive before their exec tick; each client free-runs without ever gating on
+// peers, so one slow Wi-Fi moment never freezes the match for everybody — the
+// strict per-tick lockstep variant did exactly that. Within a tick, commands
+// apply in round-robin slot order (see tick() in sim.js) so application order
+// can't differ between clients. If something still diverges — a command
+// arriving after its exec tick, a dropped packet — checksums catch it and the
+// drifted client silently swaps in a snapshot of the host's state instead of
+// halting or stuttering the match.
 function startOnline(opts) {
   const { net, seed, slot, mapSettings, playerCount } = opts
   const game = createGame({ humanCount: playerCount, aiCount: 0, difficulty: 'normal', seed, mapSettings })
@@ -95,57 +81,75 @@ function startOnline(opts) {
   game.isOnline = true
 
   let relayLost = false
-  let desyncWarned = false
   const localChecksums = new Map()
+  const hostChecksums = new Map()
+  let resyncRequestedAt = -Infinity
+  let resyncCount = 0
   const net$ = { lateCommands: 0, maxLateTicks: 0, ticksProcessed: 0, windowStart: performance.now() }
 
-  // Send initial heartbeats for the buffer window and mark them received locally
-  for (let t = 1; t <= ONLINE_INPUT_DELAY; t++) {
-    net.sendHeartbeat(t)
-    if (!game.receivedCommands.has(t)) {
-      game.receivedCommands.set(t, new Map())
-    }
-    game.receivedCommands.get(t).set(slot, [])
+  const trimOld = (map, before) => { for (const k of map.keys()) { if (k < before) map.delete(k); else break } }
+
+  // Non-hosts treat the host's sim as the authority. On a confirmed mismatch,
+  // ask it for a full snapshot — throttled so one bad stretch produces one
+  // request, not a request per checksum interval.
+  const requestResync = (atTick, mine, theirs) => {
+    console.warn(`[net] checksum mismatch at tick ${atTick}: mine=${mine} host=${theirs}`)
+    const now = performance.now()
+    if (now - resyncRequestedAt < 8000) return
+    resyncRequestedAt = now
+    console.log('[net] requesting state snapshot from host')
+    net.requestState()
+  }
+  // Host and client reach any given checksum tick at slightly different real
+  // times, so compare from both sides: when the host's hash arrives, and when
+  // the local sim computes its own.
+  const compareWithHost = (atTick) => {
+    const mine = localChecksums.get(atTick)
+    const hosts = hostChecksums.get(atTick)
+    if (mine !== undefined && hosts !== undefined && mine !== hosts) requestResync(atTick, mine, hosts)
   }
 
   game.onTickEnd = (execTick, cmds) => {
-    net.sendCommand(execTick, cmds)
-    if (!game.receivedCommands.has(execTick)) {
-      game.receivedCommands.set(execTick, new Map())
-    }
-    game.receivedCommands.get(execTick).set(slot, cmds)
+    // Only put real command batches (plus ~1/sec empty keepalives) on the wire.
+    // The lockstep version broadcast 30 msgs/sec per client just to prove
+    // liveness; the free-running model doesn't need that.
+    if (cmds.length || execTick % 30 === 0) net.sendCommand(execTick, cmds)
   }
 
   const { renderer, input, ui } = wireGame(game)
 
   net.onMessage = (msg) => {
     if (msg.type === 'cmd') {
-      if (!game.receivedCommands.has(msg.tick)) {
-        game.receivedCommands.set(msg.tick, new Map())
+      for (const cmd of msg.cmds) scheduleRemote(game, msg.tick, cmd)
+      if (msg.cmds.length && msg.tick <= game.tick) {
+        const lateBy = game.tick - msg.tick + 1
+        net$.lateCommands++
+        net$.maxLateTicks = Math.max(net$.maxLateTicks, lateBy)
       }
-      game.receivedCommands.get(msg.tick).set(msg.from, msg.cmds)
-      for (const cmd of msg.cmds) scheduleAt(game, msg.tick, cmd)
     } else if (msg.type === 'checksum') {
-      // A mismatch here used to halt the match outright. For a casual game
-      // that's a worse failure mode than it sounds: a stopped match is
-      // definitely unplayable, while a real divergence is often still
-      // playable-if-slightly-off (and checksum quantization already filters
-      // out the far more common case — harmless cross-platform float noise
-      // from sin/cos/atan2 not being bit-identical on every CPU). Log it with
-      // real numbers so a genuine logic bug is diagnosable, warn once, and
-      // keep playing instead of ending the match.
-      const mine = localChecksums.get(msg.tick)
-      if (mine !== undefined && mine !== msg.hash) {
-        console.warn(`[net] checksum mismatch at tick ${msg.tick}: mine=${mine} theirs=${msg.hash} from slot ${msg.from}`)
-        if (!desyncWarned) {
-          desyncWarned = true
-          ui.toast('Simulations may have drifted slightly out of sync — continuing anyway.', true)
-        }
-      }
+      if (slot === 0 || msg.from !== 0) return // only the host's hashes matter
+      hostChecksums.set(msg.tick, msg.hash)
+      if (hostChecksums.size > 600) trimOld(hostChecksums, game.tick - 600)
+      compareWithHost(msg.tick)
+    } else if (msg.type === 'state_req') {
+      if (slot !== 0) return
+      console.log(`[net] slot ${msg.from} requested a resync; sending snapshot at tick ${game.tick}`)
+      net.sendState(msg.from, serializeGame(game))
+    } else if (msg.type === 'state') {
+      if (slot === 0) return
+      applySnapshot(game, msg.snap)
+      localChecksums.clear()
+      hostChecksums.clear()
+      resyncRequestedAt = -Infinity
+      input.remapEntities()
+      renderer.rebuildAll()
+      resyncCount++
+      console.log(`[net] resynced to host state at tick ${msg.snap.tick}`)
+      if (resyncCount === 1) ui.toast('Hit a sync blip — quietly re-synced with the host.', true)
     } else if (msg.type === 'peer_left') {
-      if (game.players[msg.slot]) {
-        game.players[msg.slot].disconnected = true
-      }
+      // One rival dropping doesn't end the match for everyone else — they just
+      // stop sending commands, same as an AFK player; the sim keeps going.
+      if (game.players[msg.slot]) game.players[msg.slot].disconnected = true
       ui.toast(`${game.players[msg.slot]?.name ?? 'A rival'} disconnected.`, true)
     }
   }
@@ -157,7 +161,7 @@ function startOnline(opts) {
 
   const others = game.players.map((p, i) => i).filter((i) => i !== slot).map((i) => game.players[i].name)
   ui.toast(`Online match vs ${others.join(', ')} - commands have a 0.5s network buffer`)
-  window.__net = { get tick() { return game.tick }, stats: net$ }
+  window.__net = { get tick() { return game.tick }, stats: net$, forceResync: () => net.requestState() }
 
   let ended = false
   let simLast = performance.now()
@@ -165,45 +169,18 @@ function startOnline(opts) {
     if (relayLost) return
     try {
       const now = performance.now()
-      let acc = Math.min(5.0, (now - simLast) / 1000)
+      let acc = Math.min(0.25, (now - simLast) / 1000)
       simLast = now
 
-      if (!canTick(game)) {
-        if (!game.waitingSince) game.waitingSince = now
-        else if (now - game.waitingSince > 5000) {
-          const nextTick = game.tick + 1
-          const slotMap = game.receivedCommands.get(nextTick)
-          for (let i = 0; i < game.players.length; i++) {
-            if (!game.players[i].isAI && !game.players[i].disconnected) {
-              if (!slotMap || !slotMap.has(i)) {
-                game.players[i].disconnected = true
-                ui.toast(`${game.players[i].name} timed out and was dropped.`, true)
-              }
-            }
-          }
-          game.waitingSince = null
-        }
-      } else {
-        game.waitingSince = null
-      }
-
       while (acc >= FIXED_DT) {
-        if (!canTick(game)) {
-          break
-        }
         tick(game, FIXED_DT)
-        game.receivedCommands.delete(game.tick)
         net$.ticksProcessed++
         if (game.tick % CHECKSUM_INTERVAL === 0) {
           const h = checksum(game)
           localChecksums.set(game.tick, h)
-          if (localChecksums.size > 600) {
-            for (const k of localChecksums.keys()) {
-              if (k < game.tick - 600) localChecksums.delete(k)
-              else break
-            }
-          }
-          net.sendChecksum(game.tick, h)
+          if (localChecksums.size > 600) trimOld(localChecksums, game.tick - 600)
+          if (slot === 0) net.sendChecksum(game.tick, h)
+          else compareWithHost(game.tick)
         }
         acc -= FIXED_DT
       }

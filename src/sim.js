@@ -3,6 +3,7 @@ import {
   MAP, dist, each, findNearest, supplyOf, hasTemple, ageOf,
   canAfford, pay, spawnUnit, spawnBuilding, autoGather, blockedByObstacle, updateVision,
 } from './state.js'
+import { dsin, dcos, datan2, dlen } from './dmath.js'
 
 const VISION_INTERVAL = 0.25 // seconds between fog-of-war visibility recomputes
 
@@ -129,7 +130,7 @@ function unitTick(g, u, dt) {
       const range = Math.max(u.proto.range, 0.6)
       if (d > range) moveToward(g, u, t.x, t.z, dt)
       else {
-        u.rot = Math.atan2(t.z - u.z, t.x - u.x)
+        u.rot = datan2(t.z - u.z, t.x - u.x)
         if (u.atkT <= 0 && u.proto.dmg > 0) {
           u.atkT = u.proto.atkCd / u.buffAtk
           dealDamage(g, u, t)
@@ -184,7 +185,7 @@ function gatherTick(g, u, o, dt) {
   const d = dist(u, node) - node.radius
   if (d > 1.0) { moveToward(g, u, node.x, node.z, dt); u.gatherT = 0 }
   else {
-    u.rot = Math.atan2(node.z - u.z, node.x - u.x)
+    u.rot = datan2(node.z - u.z, node.x - u.x)
     u.gatherT += dt
     if (u.gatherT >= GATHER_TIME) {
       u.gatherT = 0
@@ -224,7 +225,7 @@ function speedOf(g, u) {
 
 function moveToward(g, u, tx, tz, dt) {
   let dx = tx - u.x, dz = tz - u.z
-  const d = Math.hypot(dx, dz)
+  const d = dlen(dx, dz)
   if (d < 1e-4) return
   dx /= d; dz /= d
 
@@ -233,7 +234,7 @@ function moveToward(g, u, tx, tz, dt) {
   const ob = blockedByObstacle(g, u.x + dx * probe, u.z + dz * probe, u.proto.radius)
   if (ob) {
     const ox = u.x - ob.x, oz = u.z - ob.z
-    const ol = Math.hypot(ox, oz) || 1
+    const ol = dlen(ox, oz) || 1
     // pick the tangent direction that still makes progress toward the target
     const t1x = -oz / ol, t1z = ox / ol
     const dot1 = t1x * dx + t1z * dz
@@ -241,20 +242,20 @@ function moveToward(g, u, tx, tz, dt) {
     const sz = dot1 >= 0 ? t1z : -t1z
     dx = sx * 0.85 + (ox / ol) * 0.15 // tangent plus slight outward push
     dz = sz * 0.85 + (oz / ol) * 0.15
-    const dl = Math.hypot(dx, dz) || 1
+    const dl = dlen(dx, dz) || 1
     dx /= dl; dz /= dl
   }
 
   const s = Math.min(speedOf(g, u) * dt, d)
   u.x += dx * s
   u.z += dz * s
-  u.rot = Math.atan2(dz, dx)
+  u.rot = datan2(dz, dx)
 
   // hard push out of obstacle interiors
   const inside = blockedByObstacle(g, u.x, u.z, u.proto.radius * 0.5)
   if (inside) {
     const ox = u.x - inside.x, oz = u.z - inside.z
-    const ol = Math.hypot(ox, oz) || 1
+    const ol = dlen(ox, oz) || 1
     const want = inside.r + u.proto.radius * 0.5
     u.x = inside.x + (ox / ol) * want
     u.z = inside.z + (oz / ol) * want
@@ -266,7 +267,7 @@ function moveToward(g, u, tx, tz, dt) {
 }
 
 function arrive(g, u, tx, tz, eps, dt) {
-  const d = Math.hypot(tx - u.x, tz - u.z)
+  const d = dlen(tx - u.x, tz - u.z)
   if (d <= eps) return true
   moveToward(g, u, tx, tz, dt)
   return false
@@ -401,8 +402,8 @@ function buildingTick(g, b, dt) {
       if (item.t <= 0) {
         b.queue.shift()
         const proto = UNITS[item.protoId]
-        const a = Math.atan2((b.rally?.z ?? b.z + 5) - b.z, (b.rally?.x ?? b.x) - b.x)
-        const u = spawnUnit(g, b.owner, item.protoId, b.x + Math.cos(a) * (b.proto.radius + 1.2), b.z + Math.sin(a) * (b.proto.radius + 1.2))
+        const a = datan2((b.rally?.z ?? b.z + 5) - b.z, (b.rally?.x ?? b.x) - b.x)
+        const u = spawnUnit(g, b.owner, item.protoId, b.x + dcos(a) * (b.proto.radius + 1.2), b.z + dsin(a) * (b.proto.radius + 1.2))
         if (proto.worker) autoGather(g, u)
         else if (b.rally) u.order = { type: 'attackmove', x: b.rally.x, z: b.rally.z }
         g.events.push({ type: 'trained', id: u.id, owner: b.owner })
@@ -532,6 +533,20 @@ export function scheduleAt(g, execTick, cmd) {
   arr.push(cmd)
 }
 
+// Net-layer variant of scheduleAt that skips a command already present at that
+// tick. Only matters right after a resync: the host's snapshot may already
+// contain commands whose relay broadcast is still in flight to this client, and
+// applying such a command twice (e.g. a build order paying twice) would
+// immediately re-diverge the freshly synced state.
+export function scheduleRemote(g, execTick, cmd) {
+  const arr = g.commandsByTick.get(execTick)
+  if (arr) {
+    const key = JSON.stringify(cmd)
+    if (arr.some((c) => JSON.stringify(c) === key)) return
+  }
+  scheduleAt(g, execTick, cmd)
+}
+
 function resolveUnits(g, ids) {
   const out = []
   for (const id of ids) { const e = g.entities.get(id); if (e && !e.dead && e.kind === 'unit') out.push(e) }
@@ -597,13 +612,10 @@ export function applyCommand(g, c) {
 }
 
 // Order-independent-per-tick hash of the whole simulation for desync detection.
-// Position/hp are quantized to a coarse grid before hashing, not compared
-// exactly. Different CPU architectures (e.g. Mac ARM vs Windows x86) aren't
-// guaranteed bit-identical for transcendental functions (sin/cos/atan2/sqrt),
-// which this sim uses every tick for movement — over thousands of ticks that
-// can drift by a tiny, gameplay-irrelevant amount. 0.5 world units / 1 hp of
-// tolerance absorbs that noise while still catching a real logic divergence
-// (which would produce differences far larger than float rounding ever could).
+// The sim only uses deterministic math (see dmath.js) — every client computes
+// bit-identical positions — so quantization here can be tight: 1/16 world unit
+// and 1/4 hp. A mismatch means a real divergence (a late/lost command or a
+// logic bug), which the net layer heals by fetching the host's snapshot.
 export function checksum(g) {
   let h = 0x811c9dc5 >>> 0
   const mix = (n) => { h ^= n >>> 0; h = Math.imul(h, 0x01000193) >>> 0 }
@@ -611,9 +623,9 @@ export function checksum(g) {
   for (const e of g.entities.values()) {
     if (e.dead) continue
     mix(e.id)
-    mix((e.x * 2) | 0)
-    mix((e.z * 2) | 0)
-    mix(e.hp | 0)
+    mix((e.x * 16) | 0)
+    mix((e.z * 16) | 0)
+    mix((e.hp * 4) | 0)
     if (e.kind === 'unit') mix(ORDER_CODE[e.order?.type] || 0)
     if (e.kind === 'resource') mix(e.amount | 0)
   }
@@ -651,7 +663,7 @@ export function cmdMove(g, units, x, z, attackMove = false, queue = false) {
   units.forEach((u, i) => {
     const a = (i / Math.max(1, n)) * Math.PI * 2
     const r = i === 0 ? 0 : 0.9 + Math.floor(i / 7) * 1.2
-    const ox = Math.cos(a) * r, oz = Math.sin(a) * r
+    const ox = dcos(a) * r, oz = dsin(a) * r
     setOrder(u, attackMove
       ? { type: 'attackmove', x: x + ox, z: z + oz }
       : { type: 'move', x: x + ox, z: z + oz }, queue)
@@ -694,11 +706,11 @@ export function checkPlacement(g, owner, protoId, x, z) {
       const targetDist = bestSnap.proto.radius + proto.radius - 0.1
       const dx = x - bestSnap.x
       const dz = z - bestSnap.z
-      const len = Math.hypot(dx, dz)
+      const len = dlen(dx, dz)
       if (len > 0.001) {
         x = bestSnap.x + (dx / len) * targetDist
         z = bestSnap.z + (dz / len) * targetDist
-        snapRot = Math.atan2(dz, dx)
+        snapRot = datan2(dz, dx)
       }
     }
   }
@@ -874,7 +886,7 @@ function aiBuild(g, owner, protoId, th, workers) {
   for (let attempt = 0; attempt < 10; attempt++) {
     const a = g.rng() * Math.PI * 2
     const r = 8 + g.rng() * 11
-    const x = th.x + Math.cos(a) * r, z = th.z + Math.sin(a) * r
+    const x = th.x + dcos(a) * r, z = th.z + dsin(a) * r
     const res = tryPlaceBuilding(g, owner, protoId, x, z, w)
     if (res.ok) return
   }
