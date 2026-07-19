@@ -94,12 +94,30 @@ function unitTick(g, u, dt) {
     case 'attackmove': {
       const t = acquire(g, u, Math.max(u.proto.aggro, 7))
       if (t) { u.order = { type: 'attack', targetId: t.id, resume: o }; break }
+      
+      if (u.proto.aura?.type === 'heal') {
+        const friend = findNearest(g, u, (e) => e.kind === 'unit' && e.owner === u.owner && e !== u && (e.order.type === 'attack' || e.hp < e.maxHp), 12)
+        if (friend) {
+          if (dist(u, friend) > 5) moveToward(g, u, friend.x, friend.z, dt)
+          break
+        }
+      }
+
       if (arrive(g, u, o.x, o.z, 0.8, dt)) popOrder(u)
       break
     }
     case 'patrol': {
       const t = acquire(g, u, Math.max(u.proto.aggro, 7))
       if (t) { u.order = { type: 'attack', targetId: t.id, resume: o }; break }
+      
+      if (u.proto.aura?.type === 'heal') {
+        const friend = findNearest(g, u, (e) => e.kind === 'unit' && e.owner === u.owner && e !== u && (e.order.type === 'attack' || e.hp < e.maxHp), 12)
+        if (friend) {
+          if (dist(u, friend) > 5) moveToward(g, u, friend.x, friend.z, dt)
+          break
+        }
+      }
+
       const tx = o.toB ? o.bx : o.ax, tz = o.toB ? o.bz : o.az
       if (arrive(g, u, tx, tz, 0.8, dt)) o.toB = !o.toB
       break
@@ -655,16 +673,49 @@ export function cmdRepair(g, units, target, queue = false) {
 export function checkPlacement(g, owner, protoId, x, z) {
   const proto = BUILDINGS[protoId]
   let blocked = false
+  let snapRot = 0
+
+  if (proto.kind === 'wall') {
+    let bestSnap = null
+    let bestDist = Infinity
+    each(g, (e) => {
+      if (e.kind === 'building' && e.proto.kind === 'wall' && e.owner === owner && !e.dead) {
+        const d = dist(e, { x, z })
+        if (d > 0.1 && d < e.proto.radius + proto.radius + 1.5) {
+          if (d < bestDist) {
+            bestDist = d
+            bestSnap = e
+          }
+        }
+      }
+    })
+    
+    if (bestSnap) {
+      const targetDist = bestSnap.proto.radius + proto.radius - 0.1
+      const dx = x - bestSnap.x
+      const dz = z - bestSnap.z
+      const len = Math.hypot(dx, dz)
+      if (len > 0.001) {
+        x = bestSnap.x + (dx / len) * targetDist
+        z = bestSnap.z + (dz / len) * targetDist
+        snapRot = Math.atan2(dz, dx)
+      }
+    }
+  }
+
   each(g, (e) => {
     if (blocked) return
-    if ((e.kind === 'building' || e.kind === 'tower' || e.kind === 'treasure') && dist(e, { x, z }) < e.proto.radius + proto.radius + 0.8) blocked = true
+    const isWall = proto.kind === 'wall'
+    const eIsWall = e.proto?.kind === 'wall'
+    const spacing = (isWall && eIsWall && e.owner === owner) ? -0.2 : 0.8
+    if ((e.kind === 'building' || e.kind === 'tower' || e.kind === 'treasure') && dist(e, { x, z }) < e.proto.radius + proto.radius + spacing) blocked = true
     if (e.kind === 'resource' && e.amount > 0 && dist(e, { x, z }) < e.radius + proto.radius + 0.5) blocked = true
   })
   if (!blocked && blockedByObstacle(g, x, z, proto.radius + 1)) blocked = true
   const lim = MAP / 2 - 4
   if (Math.abs(x) > lim || Math.abs(z) > lim) blocked = true
   if (blocked) return { ok: false, reason: 'Blocked placement', x, z }
-  return { ok: true, x, z }
+  return { ok: true, x, z, rot: snapRot }
 }
 
 export function tryPlaceBuilding(g, owner, protoId, x, z, builder, queue = false) {
@@ -675,6 +726,7 @@ export function tryPlaceBuilding(g, owner, protoId, x, z, builder, queue = false
 
   pay(g, owner, proto.cost)
   const b = spawnBuilding(g, owner, protoId, chk.x, chk.z, false)
+  if (chk.rot !== undefined) b.rot = chk.rot
   if (builder) setOrder(builder, { type: 'build', siteId: b.id }, queue)
   return { ok: true, building: b }
 }

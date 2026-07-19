@@ -196,8 +196,8 @@ export class Input {
     const n = { x: (this.mouse.x / window.innerWidth) * 2 - 1, y: -(this.mouse.y / window.innerHeight) * 2 + 1 }
     const pt = this.r.screenToGround(n.x, n.y)
     if (!pt) return
-    const chk = checkPlacement(this.game, 0, this.placing.protoId, pt.x, pt.z)
-    this.r.moveGhost(chk.x ?? pt.x, chk.z ?? pt.z, chk.ok)
+    const chk = checkPlacement(this.game, this.game.localPlayer, this.placing.protoId, pt.x, pt.z)
+    this.r.moveGhost(chk.x ?? pt.x, chk.z ?? pt.z, chk.ok, chk.rot)
   }
 
   onDown(e) {

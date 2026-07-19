@@ -747,10 +747,11 @@ export class Renderer {
     this.ghost = { grp, disc, protoId }
   }
 
-  moveGhost(x, z, valid) {
+  moveGhost(x, z, valid, rot = 0) {
     if (!this.ghost) return
     this.ghost.grp.visible = true
     this.ghost.grp.position.set(x, 0, z)
+    this.ghost.grp.rotation.y = rot
     this.ghost.disc.material.color.setHex(valid ? 0x4dff88 : 0xff5544)
   }
 
