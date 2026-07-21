@@ -4,3 +4,7 @@ dist/
 
 # raw source asset pack (only public/models glTFs are used at runtime)
 exampleassets/assets/
+
+# local env files
+.env
+.env.local

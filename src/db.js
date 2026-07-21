@@ -3,13 +3,13 @@ import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, si
 import { getFirestore, doc, getDoc, setDoc, updateDoc, increment } from 'firebase/firestore'
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDE6qavwjv86bW5m1iyfJegDKZPIcOFvRI",
-  authDomain: "rtsgame-ddda4.firebaseapp.com",
-  projectId: "rtsgame-ddda4",
-  storageBucket: "rtsgame-ddda4.firebasestorage.app",
-  messagingSenderId: "746542204131",
-  appId: "1:746542204131:web:064e2d0d3799362ebdf1d6",
-  measurementId: "G-GGN6E817DP"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 }
 
 const app = initializeApp(firebaseConfig)
