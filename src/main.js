@@ -52,7 +52,7 @@ function start(opts) {
         acc -= FIXED_DT
       }
       simLast -= acc * 1000
-      if (game.over && !ended) { ended = true; ui.showEnd(game.over); recordMatchResult(game.over === 'win') }
+      if (game.over && !ended) { ended = true; ui.showEnd(game.over); recordMatchResult(game.over === 'win', 'ai') }
     } catch (err) {
       console.error('[sim] tick error:', err)
       simLast = performance.now() // don't let a huge stale gap pile up on the next firing
@@ -236,7 +236,7 @@ function startOnline(opts) {
         net$.windowStart = now
       }
 
-      if (game.over && !ended) { ended = true; ui.showEnd(game.over); recordMatchResult(game.over === 'win') }
+      if (game.over && !ended) { ended = true; ui.showEnd(game.over); recordMatchResult(game.over === 'win', 'online') }
     } catch (err) {
       console.error('[sim] online tick error:', err)
       simLast = performance.now()

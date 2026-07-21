@@ -874,8 +874,10 @@ export function initProfileModal() {
       $('profile-email').textContent = user.email
       const stats = await getUserStats()
       if (stats) {
-        $('profile-wins').textContent = stats.wins || 0
-        $('profile-losses').textContent = stats.losses || 0
+        $('profile-wins-online').textContent = stats.winsOnline || 0
+        $('profile-losses-online').textContent = stats.lossesOnline || 0
+        $('profile-wins-ai').textContent = stats.winsAi || 0
+        $('profile-losses-ai').textContent = stats.lossesAi || 0
       }
     } else {
       loginView.style.display = 'flex'

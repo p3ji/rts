@@ -44,8 +44,10 @@ export async function register(email, password) {
     // Create an initial empty stats document for the user
     await setDoc(doc(db, 'users', cred.user.uid), {
       email: email,
-      wins: 0,
-      losses: 0
+      winsAi: 0,
+      lossesAi: 0,
+      winsOnline: 0,
+      lossesOnline: 0
     })
     return { ok: true }
   } catch (err) {
@@ -61,16 +63,20 @@ export async function getUserStats() {
   if (!currentUser) return null
   const d = await getDoc(doc(db, 'users', currentUser.uid))
   if (d.exists()) return d.data()
-  return { wins: 0, losses: 0 }
+  return { winsAi: 0, lossesAi: 0, winsOnline: 0, lossesOnline: 0 }
 }
 
-export async function recordMatchResult(isWin) {
+export async function recordMatchResult(isWin, mode) {
   if (!currentUser) return
   const userRef = doc(db, 'users', currentUser.uid)
+  
+  const winField = mode === 'online' ? 'winsOnline' : 'winsAi'
+  const lossField = mode === 'online' ? 'lossesOnline' : 'lossesAi'
+  
   try {
     await updateDoc(userRef, {
-      wins: increment(isWin ? 1 : 0),
-      losses: increment(isWin ? 0 : 1)
+      [winField]: increment(isWin ? 1 : 0),
+      [lossField]: increment(isWin ? 0 : 1)
     })
   } catch (err) {
     console.error('Failed to update stats:', err)
