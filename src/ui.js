@@ -4,6 +4,7 @@ import { issue } from './sim.js'
 import { PORTRAITS } from './render.js'
 import { NetClient, defaultRelayUrl } from './net.js'
 import { audio } from './audio.js'
+import { onUserChanged, login, register, logout, getUserStats, currentUser } from './db.js'
 
 const $ = (id) => document.getElementById(id)
 const hex = (c) => '#' + c.toString(16).padStart(6, '0')
@@ -34,6 +35,7 @@ export class UI {
     $('btn-army').onclick = () => { audio.click(); this.getInput().selectAllArmy() }
 
     this.setupSettings()
+    this.setupProfile()
   }
 
   // ---- settings modal: pause, volume, fog toggle, quit ---------------------------
@@ -78,6 +80,64 @@ export class UI {
     $('btn-quit').onclick = () => {
       if (confirm('Quit this match and return to the main menu?')) location.reload()
     }
+  }
+
+  setupProfile() {
+    const modal = $('profile-modal')
+    const loginView = $('profile-login-view')
+    const statsView = $('profile-stats-view')
+    const open = () => modal.classList.add('show')
+    const close = () => {
+      modal.classList.remove('show')
+      $('auth-error').style.display = 'none'
+    }
+
+    $('btn-profile').onclick = open
+    $('btn-profile-close-login').onclick = close
+    $('btn-profile-close-stats').onclick = close
+
+    const showError = (msg) => {
+      const err = $('auth-error')
+      err.textContent = msg
+      err.style.display = 'block'
+    }
+
+    $('btn-auth-login').onclick = async () => {
+      const em = $('auth-email').value, pw = $('auth-password').value
+      if (!em || !pw) return showError('Enter email and password')
+      const res = await login(em, pw)
+      if (!res.ok) showError(res.error)
+      else close()
+    }
+    
+    $('btn-auth-register').onclick = async () => {
+      const em = $('auth-email').value, pw = $('auth-password').value
+      if (!em || !pw) return showError('Enter email and password')
+      const res = await register(em, pw)
+      if (!res.ok) showError(res.error)
+      else close()
+    }
+
+    $('btn-auth-logout').onclick = () => {
+      logout()
+      close()
+    }
+
+    onUserChanged(async (user) => {
+      if (user) {
+        loginView.style.display = 'none'
+        statsView.style.display = 'flex'
+        $('profile-email').textContent = user.email
+        const stats = await getUserStats()
+        if (stats) {
+          $('profile-wins').textContent = stats.wins || 0
+          $('profile-losses').textContent = stats.losses || 0
+        }
+      } else {
+        loginView.style.display = 'flex'
+        statsView.style.display = 'none'
+      }
+    })
   }
 
   toast(msg, warn = false) {
@@ -215,7 +275,7 @@ export class UI {
     // not in the scrollable action grid below — they used to compete for grid space
     // with the build menu (up to 10 items for a worker), forcing a scroll on
     // anything but the tallest screens. This guarantees they're always reachable.
-    if (first.kind === 'unit') {
+    if (first.kind === 'unit' && !this.game.isReplay) {
       const row = $('ord-row')
       const orders = [
         { mode: 'move', icon: '🏃', label: 'Move', desc: 'Click a spot to walk there.' },
@@ -238,6 +298,7 @@ export class UI {
     }
 
     // ---- action buttons ----
+    if (this.game.isReplay) return
     const playerAge = ageOf(this.game, this.me)
 
     if (first.kind === 'building' && first.proto.trains) {
@@ -498,6 +559,22 @@ export class UI {
     $('endsub').textContent = result === 'win'
       ? 'Every rival Town Center lies in ruins. The realm is yours.'
       : 'Your Town Center has fallen. The kingdom is lost.'
+      
+    $('btn-save-replay').onclick = () => {
+      const data = JSON.stringify({
+        version: 1,
+        setupArgs: this.game.setupArgs,
+        localPlayer: this.game.localPlayer,
+        log: this.game.replayLog
+      })
+      const blob = new Blob([data], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `wobbleton_replay_${Date.now()}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    }
   }
 
   update(selected) {
@@ -674,19 +751,44 @@ function setupMapSettings() {
 // ---- online lobby: mode tabs + host/join flow --------------------------------
 
 function setupOnlineTab(homeEl, onStart, getMapSettings) {
-  const tabAi = $('tab-ai'), tabOnline = $('tab-online')
-  const cardAi = $('card-ai'), cardOnline = $('card-online')
+  const tabAi = $('tab-ai'), tabOnline = $('tab-online'), tabReplay = $('tab-replay')
+  const cardAi = $('card-ai'), cardOnline = $('card-online'), cardReplay = $('card-replay')
   const choice = $('online-choice'), joinForm = $('join-form'), status = $('lobby-status')
   const relayInput = $('online-relay')
   relayInput.value = defaultRelayUrl()
 
-  tabAi.onclick = () => {
-    tabAi.classList.add('sel'); tabOnline.classList.remove('sel')
-    cardAi.style.display = ''; cardOnline.style.display = 'none'
+  const setTab = (ai, onl, rep) => {
+    tabAi.classList.toggle('sel', ai); tabOnline.classList.toggle('sel', onl); tabReplay.classList.toggle('sel', rep)
+    cardAi.style.display = ai ? '' : 'none'
+    cardOnline.style.display = onl ? '' : 'none'
+    cardReplay.style.display = rep ? '' : 'none'
   }
-  tabOnline.onclick = () => {
-    tabOnline.classList.add('sel'); tabAi.classList.remove('sel')
-    cardAi.style.display = 'none'; cardOnline.style.display = ''
+
+  tabAi.onclick = () => setTab(true, false, false)
+  tabOnline.onclick = () => setTab(false, true, false)
+  tabReplay.onclick = () => setTab(false, false, true)
+
+  const btnLoadReplay = $('btn-load-replay')
+  const fileReplay = $('file-replay')
+  btnLoadReplay.onclick = () => fileReplay.click()
+  fileReplay.onchange = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result)
+        if (data.version && data.setupArgs && data.log) {
+          $('home').style.display = 'none'
+          onStart({ mode: 'replay', replayData: data })
+        } else {
+          alert('Invalid replay file format.')
+        }
+      } catch (err) {
+        alert('Could not parse replay file.')
+      }
+    }
+    reader.readAsText(file)
   }
 
   let net = null
@@ -713,7 +815,11 @@ function setupOnlineTab(homeEl, onStart, getMapSettings) {
     $('lobby-spinner').style.display = 'none'
     $('lobby-players').style.display = 'flex'
     $('lobby-players').innerHTML = slots
-      .map((s) => `<span class="slot-chip">${PLAYER_NAMES[s]}${s === 0 ? ' (host)' : ''}</span>`)
+      .map((s) => {
+        let name = PLAYER_NAMES[s]
+        if (s === 0 && isHost && currentUser) name = currentUser.email.split('@')[0]
+        return `<span class="slot-chip">${name}${s === 0 ? ' (host)' : ''}</span>`
+      })
       .join('')
     $('lobby-msg').textContent = isHost
       ? (slots.length < 2 ? 'Share this code — waiting for at least one more player…' : 'Start whenever you\'re ready, or wait for more players (up to 4).')

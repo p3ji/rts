@@ -5,6 +5,7 @@ import { Input } from './input.js'
 import { UI, homeScreen, showLoading } from './ui.js'
 import { DIFFICULTY } from './data.js'
 import { audio } from './audio.js'
+import { recordMatchResult } from './db.js'
 
 const FIXED_DT = 1 / 30
 // Commands execute 0.5s after being issued. This gives LAN/Wi-Fi packets room to
@@ -28,6 +29,7 @@ homeScreen(async (opts) => {
   setTimeout(() => {
     showLoading(false)
     if (opts.mode === 'online') startOnline(opts)
+    else if (opts.mode === 'replay') startReplay(opts.replayData)
     else start(opts)
   }, 0)
 })
@@ -50,10 +52,47 @@ function start(opts) {
         acc -= FIXED_DT
       }
       simLast -= acc * 1000
-      if (game.over && !ended) { ended = true; ui.showEnd(game.over) }
+      if (game.over && !ended) { ended = true; ui.showEnd(game.over); recordMatchResult(game.over === 'win') }
     } catch (err) {
       console.error('[sim] tick error:', err)
       simLast = performance.now() // don't let a huge stale gap pile up on the next firing
+    }
+  }, 1000 * FIXED_DT)
+
+  runRenderLoop(game, renderer, input, ui)
+}
+
+function startReplay(data) {
+  const game = createGame(data.setupArgs)
+  game.isReplay = true
+  game.localPlayer = data.localPlayer || 0
+  
+  // Pre-load all recorded commands into the timeline
+  for (const log of data.log) {
+    if (!game.commandsByTick.has(log.tick)) game.commandsByTick.set(log.tick, [])
+    game.commandsByTick.get(log.tick).push(...log.cmds)
+  }
+
+  const { renderer, input, ui } = wireGame(game)
+  ui.toast(`Watching Replay - ${game.players.length} players`)
+
+  let ended = false
+  let simLast = performance.now()
+  setInterval(() => {
+    if (game.paused) { simLast = performance.now(); return }
+    try {
+      const now = performance.now()
+      let acc = Math.min(0.25, (now - simLast) / 1000)
+      simLast = now
+      while (acc >= FIXED_DT) {
+        tick(game, FIXED_DT)
+        acc -= FIXED_DT
+      }
+      simLast -= acc * 1000
+      if (game.over && !ended) { ended = true; ui.showEnd(game.over) }
+    } catch (err) {
+      console.error('[sim] tick error:', err)
+      simLast = performance.now()
     }
   }, 1000 * FIXED_DT)
 
@@ -197,7 +236,7 @@ function startOnline(opts) {
         net$.windowStart = now
       }
 
-      if (game.over && !ended) { ended = true; ui.showEnd(game.over) }
+      if (game.over && !ended) { ended = true; ui.showEnd(game.over); recordMatchResult(game.over === 'win') }
     } catch (err) {
       console.error('[sim] online tick error:', err)
       simLast = performance.now()

@@ -33,6 +33,9 @@ export function createGame({ aiCount = 1, humanCount = 1, difficulty = 'normal',
   const diff = DIFFICULTY[difficulty] || DIFFICULTY.normal
 
   const g = {
+    setupArgs: { aiCount, humanCount, difficulty, seed: rngSeed, mapSettings: { ...DEFAULT_MAP_SETTINGS, ...mapSettings } },
+    isReplay: false,
+    replayLog: [],
     time: 0,
     tick: 0, // integer simulation step counter (drives lockstep + command timing)
     nextId: 1, // per-game entity id counter (kept in state so ids are deterministic)

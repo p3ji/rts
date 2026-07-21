@@ -26,6 +26,7 @@ export function tick(g, dt) {
       return (ap % n) - (bp % n)
     })
     for (const c of batch) applyCommand(g, c)
+    if (!g.isReplay) g.replayLog.push({ tick: g.tick, cmds: batch })
     g.commandsByTick.delete(g.tick)
   }
 

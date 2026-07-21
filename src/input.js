@@ -135,6 +135,7 @@ export class Input {
   }
 
   issueStop() {
+    if (this.game.isReplay) return
     const units = this.selected.filter((u) => u.kind === 'unit' && !u.dead)
     if (!units.length) return
     issue(this.game, { t: 'stop', p: this.game.localPlayer, units: ids(units) })
@@ -153,6 +154,7 @@ export class Input {
   }
 
   confirmOrderMode(n) {
+    if (this.game.isReplay) { this.orderMode = null; this.ui.refresh(this.selected); return }
     const g = this.game, me = g.localPlayer
     const mode = this.orderMode
     this.orderMode = null
@@ -218,11 +220,13 @@ export class Input {
       if (this.placing) { this.confirmPlace(n); return }
       if (this.orderMode) { this.confirmOrderMode(n); return }
       if (this.attackModifier) {
-        const pt = this.r.screenToGround(n.x, n.y)
-        const units = this.selected.filter((u) => u.kind === 'unit' && !u.dead)
-        if (units.length) {
-          issue(this.game, { t: 'move', p: this.game.localPlayer, units: ids(units), x: pt.x, z: pt.z, am: true, queue: this.keys.has('shift') })
-          this.r.orderFx(pt.x, pt.z, 0xe0483a)
+        if (!this.game.isReplay) {
+          const pt = this.r.screenToGround(n.x, n.y)
+          const units = this.selected.filter((u) => u.kind === 'unit' && !u.dead)
+          if (units.length) {
+            issue(this.game, { t: 'move', p: this.game.localPlayer, units: ids(units), x: pt.x, z: pt.z, am: true, queue: this.keys.has('shift') })
+            this.r.orderFx(pt.x, pt.z, 0xe0483a)
+          }
         }
         this.attackModifier = false
         return
@@ -363,6 +367,7 @@ export class Input {
   }
 
   rightCommand(n) {
+    if (this.game.isReplay) return
     const g = this.game
     const me = g.localPlayer
     const units = this.selected.filter((u) => u.kind === 'unit' && !u.dead)
@@ -419,6 +424,7 @@ export class Input {
   }
 
   confirmPlace(n) {
+    if (this.game.isReplay) return
     const g = this.game
     const me = g.localPlayer
     const pt = this.r.screenToGround(n.x, n.y)
