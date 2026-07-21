@@ -15,6 +15,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "playwright": "^1.61.1",
     "vite": "^5.4.8"
   }
 }

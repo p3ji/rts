@@ -80,69 +80,6 @@ export class UI {
       if (confirm('Quit this match and return to the main menu?')) location.reload()
     }
   }
-// ---- profile modal: login/register/stats ---------------------------------------
-
-export function initProfileModal() {
-  const modal = $('profile-modal')
-  const loginView = $('profile-login-view')
-  const statsView = $('profile-stats-view')
-  const open = () => modal.classList.add('show')
-  const close = () => {
-    modal.classList.remove('show')
-    $('auth-error').style.display = 'none'
-  }
-
-  $('btn-profile').onclick = open
-  if ($('home-btn-profile')) $('home-btn-profile').onclick = open
-  $('btn-profile-close-login').onclick = close
-  $('btn-profile-close-stats').onclick = close
-
-  const showError = (msg) => {
-    const err = $('auth-error')
-    err.textContent = msg
-    err.style.display = 'block'
-  }
-
-  $('btn-auth-login').onclick = async () => {
-    const em = $('auth-email').value, pw = $('auth-password').value
-    if (!em || !pw) return showError('Enter email and password')
-    const res = await login(em, pw)
-    if (!res.ok) showError(res.error)
-    else close()
-  }
-  
-  $('btn-auth-register').onclick = async () => {
-    const em = $('auth-email').value, pw = $('auth-password').value
-    if (!em || !pw) return showError('Enter email and password')
-    const res = await register(em, pw)
-    if (!res.ok) showError(res.error)
-    else close()
-  }
-
-  $('btn-auth-logout').onclick = () => {
-    logout()
-    close()
-  }
-
-  onUserChanged(async (user) => {
-    if (user) {
-      loginView.style.display = 'none'
-      statsView.style.display = 'flex'
-      $('profile-email').textContent = user.email
-      const stats = await getUserStats()
-      if (stats) {
-        $('profile-wins').textContent = stats.wins || 0
-        $('profile-losses').textContent = stats.losses || 0
-      }
-    } else {
-      loginView.style.display = 'flex'
-      statsView.style.display = 'none'
-    }
-  })
-}
-
-// Call once on script load
-initProfileModal()
 
   toast(msg, warn = false) {
     const el = $('toast')
@@ -885,3 +822,67 @@ export function showLoading(show, frac = 0) {
   el.style.display = show ? 'flex' : 'none'
   $('loadbar-fill').style.width = Math.round(frac * 100) + '%'
 }
+
+// ---- profile modal: login/register/stats ---------------------------------------
+
+export function initProfileModal() {
+  const modal = $('profile-modal')
+  const loginView = $('profile-login-view')
+  const statsView = $('profile-stats-view')
+  const open = () => modal.classList.add('show')
+  const close = () => {
+    modal.classList.remove('show')
+    $('auth-error').style.display = 'none'
+  }
+
+  $('btn-profile').onclick = open
+  if ($('home-btn-profile')) $('home-btn-profile').onclick = open
+  $('btn-profile-close-login').onclick = close
+  $('btn-profile-close-stats').onclick = close
+
+  const showError = (msg) => {
+    const err = $('auth-error')
+    err.textContent = msg
+    err.style.display = 'block'
+  }
+
+  $('btn-auth-login').onclick = async () => {
+    const em = $('auth-email').value, pw = $('auth-password').value
+    if (!em || !pw) return showError('Enter email and password')
+    const res = await login(em, pw)
+    if (!res.ok) showError(res.error)
+    else close()
+  }
+  
+  $('btn-auth-register').onclick = async () => {
+    const em = $('auth-email').value, pw = $('auth-password').value
+    if (!em || !pw) return showError('Enter email and password')
+    const res = await register(em, pw)
+    if (!res.ok) showError(res.error)
+    else close()
+  }
+
+  $('btn-auth-logout').onclick = () => {
+    logout()
+    close()
+  }
+
+  onUserChanged(async (user) => {
+    if (user) {
+      loginView.style.display = 'none'
+      statsView.style.display = 'flex'
+      $('profile-email').textContent = user.email
+      const stats = await getUserStats()
+      if (stats) {
+        $('profile-wins').textContent = stats.wins || 0
+        $('profile-losses').textContent = stats.losses || 0
+      }
+    } else {
+      loginView.style.display = 'flex'
+      statsView.style.display = 'none'
+    }
+  })
+}
+
+// Call once on script load
+initProfileModal()
