@@ -39,7 +39,7 @@ export class NetClient {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg))
   }
 
-  host(mapSettings) { this.send({ type: 'host', mapSettings }) }
+  host(mapSettings, aiCount) { this.send({ type: 'host', mapSettings, aiCount }) }
   join(code) { this.send({ type: 'join', code }) }
   startMatch() { this.send({ type: 'start_match' }) }
   sendCommand(tick, cmds) { this.send({ type: 'cmd', tick, cmds }) }

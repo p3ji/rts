@@ -161,6 +161,33 @@ function generateMap(g, rnd, spawns) {
   const featurePositions = [] // towers + treasure placed so far, just for spacing them out
   const nearFeature = (x, z, pad) => featurePositions.some((f) => dlen(x - f.x, z - f.z) < pad)
 
+  // river generation (vertical from top to bottom)
+  const layout = g.mapSettings.layout || 'noriver'
+  if (layout === '1bridge' || layout === '3bridge') {
+    const r = 5.5
+    // step along the z axis (x=0)
+    for (let t = -MAP / 2; t <= MAP / 2; t += r * 1.2) {
+      const x = 0, z = t
+      let isBridge = false
+      if (layout === '1bridge') {
+        if (Math.abs(t) < 14) isBridge = true
+      } else {
+        if (Math.abs(t) < 14) isBridge = true // mid bridge
+        if (Math.abs(t - (MAP / 3)) < 12) isBridge = true // bottom bridge
+        if (Math.abs(t + (MAP / 3)) < 12) isBridge = true // top bridge
+      }
+      
+      if (isBridge) {
+        // Place bridge decoration right at the center of the gap
+        if (Math.abs(t) < (r*0.6) || Math.abs(t - (MAP/3)) < (r*0.6) || Math.abs(t + (MAP/3)) < (r*0.6)) {
+           g.decor.push({ x, z, model: 'bridge', rot: 0, scale: 2 })
+        }
+        continue
+      }
+      g.obstacles.push({ x, z, r, model: 'river', rot: 0, scale: 1 })
+    }
+  }
+
   // mountains — impassable terrain features
   const nMountains = 5 + Math.floor(rnd() * 4)
   for (let i = 0; i < nMountains && g.obstacles.length < nMountains; ) {

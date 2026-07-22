@@ -184,6 +184,9 @@ export class UI {
       statsHtml = `<span class="stat">❤ ${Math.ceil(first.hp)}/${first.maxHp}</span>`
       if (first.constructing) {
         statsHtml += `<span class="stat warn">🔨 Under construction</span>`
+        if (first.owner === this.me && !this.game.isReplay) {
+          statsHtml += `<button class="ordchip" id="btn-cancel-build" style="margin-left:8px; padding:2px 6px; background:#8a2020; border:1px solid #5a1515; font-size:11px; cursor:pointer;" title="Cancel and refund 100% cost">Cancel</button>`
+        }
         progressHtml = `<div class="pbar"><div style="width:${Math.round(first.progress * 100)}%"></div></div>`
       } else if (first.research) {
         statsHtml += `<span class="stat warn">📜 Advancing to Age II</span>`
@@ -212,6 +215,13 @@ export class UI {
         ${first.kind === 'unit' ? '<div class="ord-row" id="ord-row"></div>' : ''}
       </div>`
 
+    const btnCancel = $('btn-cancel-build')
+    if (btnCancel) {
+      btnCancel.onclick = () => {
+        audio.click()
+        issue(this.game, { t: 'cancelbuild', p: this.me, b: first.id })
+      }
+    }
     // Move/Attack/Patrol as small always-visible icon buttons beside the portrait,
     // not in the scrollable action grid below — they used to compete for grid space
     // with the build menu (up to 10 items for a worker), forcing a scroll on
@@ -666,6 +676,28 @@ function setupMapSettings() {
     chevron.textContent = open ? '▴' : '▾'
   }
 
+  let layout = 'noriver'
+  const layoutWrap = $('opt-layout')
+  if (layoutWrap) {
+    layoutWrap.innerHTML = ''
+    const layouts = {
+      'noriver': 'No River',
+      '1bridge': '1 Bridge',
+      '3bridge': '3 Bridges'
+    }
+    for (const key of Object.keys(layouts)) {
+      const b = document.createElement('button')
+      b.className = 'opt' + (key === layout ? ' sel' : '')
+      b.textContent = layouts[key]
+      b.onclick = () => {
+        layout = key
+        layoutWrap.querySelectorAll('.opt').forEach((x) => x.classList.remove('sel'))
+        b.classList.add('sel')
+      }
+      layoutWrap.appendChild(b)
+    }
+  }
+
   let abundance = 'normal'
   const abWrap = $('opt-abundance')
   abWrap.innerHTML = ''
@@ -686,7 +718,7 @@ function setupMapSettings() {
   towersBtn.onclick = () => { towers = !towers; towersBtn.classList.toggle('off', !towers) }
   treasureBtn.onclick = () => { treasure = !treasure; treasureBtn.classList.toggle('off', !treasure) }
 
-  return () => ({ resourceAbundance: abundance, towers, treasure })
+  return () => ({ layout, resourceAbundance: abundance, towers, treasure })
 }
 
 // ---- online lobby: mode tabs + host/join flow --------------------------------
@@ -774,12 +806,29 @@ function setupOnlineTab(homeEl, onStart, getMapSettings) {
   $('btn-join').onclick = () => { choice.style.display = 'none'; joinForm.style.display = ''; $('join-code').focus() }
   $('btn-start-match').onclick = () => net?.startMatch()
 
+  let onlineAiCount = 0
+  const onlineAiWrap = $('opt-online-ai')
+  if (onlineAiWrap) {
+    onlineAiWrap.innerHTML = ''
+    for (const n of [0, 1, 2, 3]) {
+      const b = document.createElement('button')
+      b.className = 'opt' + (n === onlineAiCount ? ' sel' : '')
+      b.textContent = n === 0 ? 'None' : (n === 1 ? '1 rival' : `${n} rivals`)
+      b.onclick = () => {
+        onlineAiCount = n
+        onlineAiWrap.querySelectorAll('.opt').forEach((x) => x.classList.remove('sel'))
+        b.classList.add('sel')
+      }
+      onlineAiWrap.appendChild(b)
+    }
+  }
+
   $('btn-host').onclick = () => {
     isHost = true
     showStatus('Connecting to relay…')
     net = new NetClient(relayInput.value.trim())
     net.connect().then(() => {
-      net.host(getMapSettings())
+      net.host(getMapSettings(), onlineAiCount)
       net.onMessage = (msg) => {
         if (msg.type === 'hosted') {
           $('lobby-code').textContent = msg.code
@@ -788,7 +837,7 @@ function setupOnlineTab(homeEl, onStart, getMapSettings) {
           showLobby(msg.slots)
         } else if (msg.type === 'start') {
           homeEl.style.display = 'none'
-          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings, playerCount: msg.playerCount })
+          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings, playerCount: msg.playerCount, aiCount: msg.aiCount })
         }
       }
       net.onClose = () => showStatus('Connection lost. Try again.')
@@ -808,7 +857,7 @@ function setupOnlineTab(homeEl, onStart, getMapSettings) {
         else if (msg.type === 'error') showStatus(msg.reason || 'Could not join that room.')
         else if (msg.type === 'start') {
           homeEl.style.display = 'none'
-          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings, playerCount: msg.playerCount })
+          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings, playerCount: msg.playerCount, aiCount: msg.aiCount })
         }
       }
       net.onClose = () => showStatus('Connection lost. Try again.')

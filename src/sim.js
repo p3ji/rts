@@ -609,6 +609,28 @@ export function applyCommand(g, c) {
       }
       break
     }
+    case 'cancelbuild': {
+      const b = g.entities.get(c.b)
+      if (b && !b.dead && b.owner === c.p && b.constructing) {
+        // Refund cost
+        const cost = b.proto.cost
+        const p = g.players[c.p]
+        p.w += cost.w || 0
+        p.g += cost.g || 0
+        
+        // Kill the building
+        b.dead = true
+        b.hp = 0
+
+        // Find any workers currently building it and reset their order
+        for (const e of g.entities.values()) {
+          if (e.kind === 'unit' && e.owner === c.p && e.order.type === 'build' && e.order.siteId === b.id) {
+            e.order = { type: 'idle' }
+          }
+        }
+      }
+      break
+    }
   }
 }
 

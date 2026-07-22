@@ -113,8 +113,8 @@ function startReplay(data) {
 // drifted client silently swaps in a snapshot of the host's state instead of
 // halting or stuttering the match.
 function startOnline(opts) {
-  const { net, seed, slot, mapSettings, playerCount } = opts
-  const game = createGame({ humanCount: playerCount, aiCount: 0, difficulty: 'normal', seed, mapSettings })
+  const { net, seed, slot, mapSettings, playerCount, aiCount } = opts
+  const game = createGame({ humanCount: playerCount, aiCount: aiCount || 0, difficulty: 'normal', seed, mapSettings })
   game.localPlayer = slot
   game.inputDelay = ONLINE_INPUT_DELAY
   game.isOnline = true

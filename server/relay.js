@@ -33,7 +33,7 @@ function startMatch(room) {
   const playerCount = room.sockets.filter(Boolean).length
   room.started = true
   room.sockets.forEach((ws, slot) => {
-    if (ws) send(ws, { type: 'start', seed, slot, playerCount, mapSettings: room.mapSettings })
+    if (ws) send(ws, { type: 'start', seed, slot, playerCount, aiCount: room.aiCount, mapSettings: room.mapSettings })
   })
 }
 
@@ -50,7 +50,7 @@ wss.on('connection', (ws) => {
     if (msg.type === 'host') {
       let code
       do { code = makeCode() } while (rooms.has(code))
-      const room = { sockets: [ws, ...Array(MAX_PLAYERS - 1).fill(null)], mapSettings: msg.mapSettings, started: false }
+      const room = { sockets: [ws, ...Array(MAX_PLAYERS - 1).fill(null)], mapSettings: msg.mapSettings, aiCount: msg.aiCount || 0, started: false }
       rooms.set(code, room)
       ws.room = code
       ws.slot = 0

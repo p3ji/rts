@@ -368,22 +368,42 @@ export class Renderer {
     // Track {grp,x,z} here so sync() can hide/reveal them same as real entities.
     this.scenery = []
     for (const o of g.obstacles) {
-      const name = MODELS.scenery.mountain[o.variant % MODELS.scenery.mountain.length]
-      const m = modelInstance(name, o.r * 2.4)
-      m.position.set(o.x, 0, o.z)
-      m.rotation.y = o.rot
-      this.scene.add(m)
-      this.scenery.push({ grp: m, x: o.x, z: o.z })
+      if (o.model === 'river') {
+        // Draw a flat blue plane for the water
+        const geo = new THREE.CylinderGeometry(o.r, o.r, 0.5, 16)
+        const mat = new THREE.MeshLambertMaterial({ color: 0x3a82c4, flatShading: true })
+        const m = new THREE.Mesh(geo, mat)
+        m.position.set(o.x, -0.2, o.z)
+        this.scene.add(m)
+        this.scenery.push({ grp: m, x: o.x, z: o.z })
+      } else {
+        const name = MODELS.scenery.mountain[o.variant % MODELS.scenery.mountain.length]
+        const m = modelInstance(name, o.r * 2.4)
+        m.position.set(o.x, 0, o.z)
+        m.rotation.y = o.rot
+        this.scene.add(m)
+        this.scenery.push({ grp: m, x: o.x, z: o.z })
+      }
     }
     for (const d of g.decor) {
-      const list = MODELS.scenery[d.model]
-      if (!list) continue
-      const name = list[d.variant % list.length]
-      const m = modelInstance(name, (d.model === 'windmill' ? 6.5 : d.model === 'rock' ? 2.2 : 1.4) * d.scale)
-      m.position.set(d.x, 0, d.z)
-      m.rotation.y = d.rot
-      this.scene.add(m)
-      this.scenery.push({ grp: m, x: d.x, z: d.z })
+      if (d.model === 'bridge') {
+        const geo = new THREE.BoxGeometry(12, 0.4, 28)
+        const mat = new THREE.MeshLambertMaterial({ color: 0x8b5a2b })
+        const m = new THREE.Mesh(geo, mat)
+        m.position.set(d.x, 0, d.z)
+        m.rotation.y = d.rot
+        this.scene.add(m)
+        this.scenery.push({ grp: m, x: d.x, z: d.z })
+      } else {
+        const list = MODELS.scenery[d.model]
+        if (!list) continue
+        const name = list[d.variant % list.length]
+        const m = modelInstance(name, (d.model === 'windmill' ? 6.5 : d.model === 'rock' ? 2.2 : 1.4) * d.scale)
+        m.position.set(d.x, 0, d.z)
+        m.rotation.y = d.rot
+        this.scene.add(m)
+        this.scenery.push({ grp: m, x: d.x, z: d.z })
+      }
     }
   }
 
