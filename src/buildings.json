@@ -77,8 +77,8 @@
     "buildTime": 30,
     "hp": 700,
     "radius": 3.2,
-    "trains": ["priest"],
-    "desc": "Required to advance to Age II. Trains Priests in Age II."
+    "trains": ["priest", "sorcerer"],
+    "desc": "Required to advance to Age II. Trains Priests and Sorcerers in Age II."
   },
   "wall": {
     "name": "Wall",

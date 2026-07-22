@@ -213,8 +213,48 @@ function makePerson(role, teamColor, radius = 0.55) {
       box(grp, 0.12 * s, 0.12 * s, 0.12 * s, metal(0xe8c447), 0.34 * s, (0.16 + bodyH + 0.5) * s, 0.06 * s, 0.6, 0.6)
       break
     }
+    case 'sorcerer': {
+      box(grp, 0.44 * s, 0.18 * s, 0.4 * s, lamb(0x3d2b5c), 0, hatY - 0.05 * s, 0) // cowl base
+      box(grp, 0.28 * s, 0.22 * s, 0.28 * s, lamb(0x563c82), 0, hatY + 0.07 * s, -0.04 * s) // cowl peak
+      box(grp, 0.46 * s, 0.08 * s, 0.34 * s, team, 0, (0.16 + bodyH * 0.45) * s, 0) // team sash
+      const staff = box(grp, 0.05 * s, 0.95 * s, 0.05 * s, lamb(0x4a3425), 0.34 * s, (0.16 + bodyH) * s, 0.06 * s)
+      const orbMat = new THREE.MeshBasicMaterial({ color: 0x9b51e0, transparent: true, opacity: 0.9 })
+      const orb = new THREE.Mesh(new THREE.SphereGeometry(0.14 * s, 10, 10), orbMat)
+      orb.position.set(0.34 * s, (0.16 + bodyH + 0.52) * s, 0.06 * s)
+      grp.add(orb)
+      break
+    }
   }
   return { grp, armL, armR }
+}
+
+function makeGolem(teamColor, radius = 1.2) {
+  const s = radius / 1.0
+  const grp = new THREE.Group()
+  const rockMat = lamb(0x6e6e6e)
+  const darkRockMat = lamb(0x4a4a4a)
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff }) // glowing eyes
+
+  box(grp, 1.4 * s, 1.1 * s, 1.0 * s, rockMat, 0, 1.1 * s, 0)
+  box(grp, 1.1 * s, 0.8 * s, 0.9 * s, darkRockMat, 0, 0.5 * s, 0)
+
+  box(grp, 0.7 * s, 0.5 * s, 0.6 * s, rockMat, 0, 1.8 * s, 0.1 * s)
+  box(grp, 0.15 * s, 0.08 * s, 0.08 * s, eyeMat, -0.18 * s, 1.82 * s, 0.38 * s)
+  box(grp, 0.15 * s, 0.08 * s, 0.08 * s, eyeMat, 0.18 * s, 1.82 * s, 0.38 * s)
+
+  box(grp, 0.6 * s, 0.5 * s, 0.6 * s, darkRockMat, -0.9 * s, 1.4 * s, 0)
+  box(grp, 0.6 * s, 0.5 * s, 0.6 * s, darkRockMat, 0.9 * s, 1.4 * s, 0)
+
+  box(grp, 0.45 * s, 0.9 * s, 0.45 * s, rockMat, -0.95 * s, 0.75 * s, 0.1 * s)
+  box(grp, 0.45 * s, 0.9 * s, 0.45 * s, rockMat, 0.95 * s, 0.75 * s, 0.1 * s)
+
+  box(grp, 0.45 * s, 0.5 * s, 0.45 * s, darkRockMat, -0.4 * s, 0.25 * s, 0)
+  box(grp, 0.45 * s, 0.5 * s, 0.45 * s, darkRockMat, 0.4 * s, 0.25 * s, 0)
+
+  const teamMat = lamb(teamColor)
+  box(grp, 1.44 * s, 0.18 * s, 1.04 * s, teamMat, 0, 1.05 * s, 0)
+
+  return { grp }
 }
 
 function makeCatapult(teamColor, radius = 1.0) {
@@ -652,6 +692,8 @@ export class Renderer {
     } else {
       const built = e.protoId === 'catapult'
         ? { grp: makeCatapult(PLAYER_COLORS[e.owner], e.proto.radius) }
+        : e.protoId === 'golem'
+        ? makeGolem(PLAYER_COLORS[e.owner], e.proto.radius)
         : makePerson(e.protoId, PLAYER_COLORS[e.owner], e.proto.radius)
       grp.add(built.grp)
       grp.userData.armL = built.armL

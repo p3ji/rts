@@ -25,7 +25,7 @@ function send(ws, msg) {
 
 function broadcastLobby(room, code) {
   const slots = room.sockets.map((s, i) => (s ? i : null)).filter((i) => i !== null)
-  for (const ws of room.sockets) if (ws) send(ws, { type: 'lobby', code, slots })
+  for (const ws of room.sockets) if (ws) send(ws, { type: 'lobby', code, slots, teams: room.teams })
 }
 
 function startMatch(room) {
@@ -33,7 +33,7 @@ function startMatch(room) {
   const playerCount = room.sockets.filter(Boolean).length
   room.started = true
   room.sockets.forEach((ws, slot) => {
-    if (ws) send(ws, { type: 'start', seed, slot, playerCount, aiCount: room.aiCount, mapSettings: room.mapSettings })
+    if (ws) send(ws, { type: 'start', seed, slot, playerCount, aiCount: room.aiCount, mapSettings: room.mapSettings, teams: room.teams })
   })
 }
 
@@ -50,12 +50,23 @@ wss.on('connection', (ws) => {
     if (msg.type === 'host') {
       let code
       do { code = makeCode() } while (rooms.has(code))
-      const room = { sockets: [ws, ...Array(MAX_PLAYERS - 1).fill(null)], mapSettings: msg.mapSettings, aiCount: msg.aiCount || 0, started: false }
+      const teams = Array.isArray(msg.teams) ? msg.teams : [0, 1, 0, 1]
+      const room = { sockets: [ws, ...Array(MAX_PLAYERS - 1).fill(null)], mapSettings: msg.mapSettings, aiCount: msg.aiCount || 0, teams, started: false }
       rooms.set(code, room)
       ws.room = code
       ws.slot = 0
       send(ws, { type: 'hosted', code })
       broadcastLobby(room, code)
+      return
+    }
+
+    if (msg.type === 'set_teams') {
+      const room = rooms.get(ws.room)
+      if (!room || room.started) return
+      if (Array.isArray(msg.teams)) {
+        room.teams = msg.teams
+        broadcastLobby(room, ws.room)
+      }
       return
     }
 

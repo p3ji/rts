@@ -27,13 +27,22 @@ export function mulberry32(seed) {
   return f
 }
 
-export function createGame({ aiCount = 1, humanCount = 1, difficulty = 'normal', seed = null, mapSettings = null } = {}) {
+export function areAllies(g, p1, p2) {
+  if (p1 === undefined || p2 === undefined || p1 < 0 || p2 < 0) return false
+  if (p1 === p2) return true
+  if (!g || !g.players) return false
+  const t1 = g.players[p1]?.team
+  const t2 = g.players[p2]?.team
+  return t1 !== undefined && t2 !== undefined && t1 === t2
+}
+
+export function createGame({ aiCount = 1, humanCount = 1, difficulty = 'normal', seed = null, mapSettings = null, teams = null } = {}) {
   const rngSeed = seed ?? Math.floor(Math.random() * 2 ** 31)
   const rnd = mulberry32(rngSeed)
   const diff = DIFFICULTY[difficulty] || DIFFICULTY.normal
 
   const g = {
-    setupArgs: { aiCount, humanCount, difficulty, seed: rngSeed, mapSettings: { ...DEFAULT_MAP_SETTINGS, ...mapSettings } },
+    setupArgs: { aiCount, humanCount, difficulty, seed: rngSeed, mapSettings: { ...DEFAULT_MAP_SETTINGS, ...mapSettings }, teams },
     isReplay: false,
     replayLog: [],
     time: 0,
@@ -43,6 +52,7 @@ export function createGame({ aiCount = 1, humanCount = 1, difficulty = 'normal',
     paused: false,
     seed: rngSeed,
     mapSettings: { ...DEFAULT_MAP_SETTINGS, ...mapSettings },
+    teams: teams || null,
     // Simulation RNG — a separate, reproducible stream from map generation so the
     // number of map-gen calls can change without shifting in-game randomness.
     // Both networked clients derive the identical stream from the shared seed.
@@ -73,10 +83,11 @@ export function createGame({ aiCount = 1, humanCount = 1, difficulty = 'normal',
   const nPlayers = Math.min(4, nHumans + Math.max(0, aiCount))
   for (let i = 0; i < nPlayers; i++) {
     const isAI = i >= nHumans
+    const team = (teams && teams[i] !== undefined) ? teams[i] : i
     g.players.push({
       name: PLAYER_NAMES[i], color: PLAYER_COLORS[i],
       w: 200, g: 100, age: 1, ageUp: null, // ageUp: { t } while researching
-      isAI, alive: true,
+      isAI, alive: true, team,
       ai: isAI ? { t: rnd() * 2, nextWave: diff.waveFirst, waveSize: diff.waveStart, attacking: false } : null,
     })
   }
@@ -106,14 +117,14 @@ export function sightRadius(e) {
   return e.proto?.range ? Math.max(18, e.proto.range + 8) : 18
 }
 
-// Recompute the local player's visibility grid from their units & buildings.
+// Recompute the local player's visibility grid from their units & buildings (plus allies).
 export function updateVision(g) {
   const f = g.fog
   if (!f) return
   f.vis.fill(0)
   const n = f.n, half = MAP / 2
   for (const e of g.entities.values()) {
-    if (e.dead || e.owner !== g.localPlayer) continue
+    if (e.dead || !areAllies(g, e.owner, g.localPlayer)) continue
     if (e.kind !== 'unit' && e.kind !== 'building') continue
     const r = sightRadius(e)
     const cx = (e.x + half) / FOG_CELL, cz = (e.z + half) / FOG_CELL, cr = r / FOG_CELL
@@ -317,6 +328,8 @@ export function spawnUnit(g, owner, protoId, x, z) {
     id: g.nextId++, kind: 'unit', protoId, proto: p, owner,
     x, z, rot: 0,
     hp: p.hp, maxHp: p.hp, lastHit: -99,
+    mana: 0, maxMana: p.maxMana || 0, manaRegen: p.manaRegen || 0,
+    ttl: p.ttl || 0,
     order: { type: 'idle' }, orderQueue: [],
     atkT: 0, gatherT: 0, carry: null,
     buffSpeed: 1, buffAtk: 1, slowUntil: 0,

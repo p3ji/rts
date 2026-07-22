@@ -1,7 +1,7 @@
 import { UNITS, BUILDINGS, AGE_UP_COST, AGE_UP_TIME, SUPPLY_CAP, DIFFICULTY } from './data.js'
 import {
   MAP, dist, each, findNearest, supplyOf, hasTemple, ageOf,
-  canAfford, pay, spawnUnit, spawnBuilding, autoGather, blockedByObstacle, updateVision,
+  canAfford, pay, spawnUnit, spawnBuilding, autoGather, blockedByObstacle, updateVision, areAllies,
 } from './state.js'
 import { dsin, dcos, datan2, dlen } from './dmath.js'
 
@@ -30,63 +30,79 @@ export function tick(g, dt) {
     g.commandsByTick.delete(g.tick)
   }
 
-  for (let i = 0; i < g.players.length; i++) if (g.players[i].isAI) aiThink(g, i, dt)
+  // periodic fog recompute
+  g.visTimer = (g.visTimer || 0) + dt
+  if (g.visTimer >= VISION_INTERVAL) {
+    g.visTimer = 0
+    updateVision(g)
+  }
 
-  // Collect units once and hand them to towerTick/treasureTick below instead of
-  // each() re-scanning every entity (units+buildings+resources+other features)
-  // per tower/chest — that O(features * totalEntities) pattern is exactly the
-  // bug already fixed once in separation(); the neutral-feature code repeated
-  // it, and with real multiplayer economies (hundreds of entities across 3+
-  // active players, not a lightly-tested 1-2 player scenario) it compounds into
-  // real stutter every tick.
+  // run AI controllers
+  for (let i = 0; i < g.players.length; i++) {
+    const p = g.players[i]
+    if (p.isAI && p.alive) aiTick(g, i, dt)
+  }
+
+  // unit updates
   const units = []
+  each(g, (e) => { if (e.kind === 'unit' && !e.dead) units.push(e) })
+  for (const u of units) unitTick(g, u, dt)
+
+  // building updates
+  const bldgs = []
+  each(g, (e) => { if ((e.kind === 'building' || e.kind === 'tower') && !e.dead) bldgs.push(e) })
+  for (const b of bldgs) buildingTick(g, b, dt)
+
+  // watchtowers (neutral capture points)
   const towers = []
-  const treasures = []
-  each(g, (e) => {
-    if (e.kind === 'unit') { unitTick(g, e, dt); units.push(e) }
-    else if (e.kind === 'building') buildingTick(g, e, dt)
-    else if (e.kind === 'tower') towers.push(e)
-    else if (e.kind === 'treasure') treasures.push(e)
-  })
+  each(g, (e) => { if (e.kind === 'tower' && !e.dead) towers.push(e) })
   for (const t of towers) towerTick(g, t, dt, units)
-  for (const c of treasures) treasureTick(g, c, units)
 
-  separation(g)
+  // treasure chests
+  const chests = []
+  each(g, (e) => { if (e.kind === 'treasure' && !e.dead) chests.push(e) })
+  for (const c of chests) treasureTick(g, c, units)
+
   auras(g, dt)
-  cleanup(g)
+  separation(g)
   winCheck(g)
-
-  if (g.fog?.enabled) {
-    g.fog.visT += dt
-    if (g.fog.visT >= VISION_INTERVAL) { g.fog.visT = 0; updateVision(g) }
-  }
-  
-  if (g.isOnline) {
-    const et = g.tick + g.inputDelay
-    g.onTickEnd?.(et, g.localCommandsThisTick)
-    g.localCommandsThisTick = []
-  }
 }
 
-// ---- units -----------------------------------------------------------------
+// ---- unit logic ------------------------------------------------------------
 
 function unitTick(g, u, dt) {
+  if (u.ttl > 0) {
+    u.ttl -= dt
+    if (u.ttl <= 0) {
+      kill(g, u)
+      return
+    }
+  }
+  if (u.maxMana > 0 && u.mana < u.maxMana) {
+    u.mana = Math.min(u.maxMana, u.mana + u.manaRegen * dt)
+  }
+
   u.atkT = Math.max(0, u.atkT - dt)
   const o = u.order
 
   switch (o.type) {
     case 'idle': {
-      if (u.proto.aggro > 0) {
-        const t = acquire(g, u, u.proto.aggro)
-        if (t) u.order = { type: 'attack', targetId: t.id, resume: { type: 'idle' } }
-      } else if (u.proto.worker) {
-        if (!u.idleT) u.idleT = 0
-        u.idleT += dt
-        if (u.idleT > 2) { u.idleT = 0; autoGather(g, u) }
+      const t = acquire(g, u, u.proto.aggro)
+      if (t) { u.order = { type: 'attack', targetId: t.id, resume: o }; break }
+      
+      if (u.proto.aura?.type === 'heal') {
+        const friend = findNearest(g, u, (e) => e.kind === 'unit' && areAllies(g, e.owner, u.owner) && e !== u && (e.order.type === 'attack' || e.hp < e.maxHp), 12)
+        if (friend) {
+          if (dist(u, friend) > 5) moveToward(g, u, friend.x, friend.z, dt)
+          break
+        }
       }
+
+      // idle workers auto-gather nearby resources if any exist
+      if (u.proto.worker) autoGather(g, u)
       break
     }
-    case 'stop':
+    case 'hold':
       // do absolutely nothing, not even auto-aggro, to ensure they stand ground
       break
     case 'move': {
@@ -98,7 +114,7 @@ function unitTick(g, u, dt) {
       if (t) { u.order = { type: 'attack', targetId: t.id, resume: o }; break }
       
       if (u.proto.aura?.type === 'heal') {
-        const friend = findNearest(g, u, (e) => e.kind === 'unit' && e.owner === u.owner && e !== u && (e.order.type === 'attack' || e.hp < e.maxHp), 12)
+        const friend = findNearest(g, u, (e) => e.kind === 'unit' && areAllies(g, e.owner, u.owner) && e !== u && (e.order.type === 'attack' || e.hp < e.maxHp), 12)
         if (friend) {
           if (dist(u, friend) > 5) moveToward(g, u, friend.x, friend.z, dt)
           break
@@ -113,7 +129,7 @@ function unitTick(g, u, dt) {
       if (t) { u.order = { type: 'attack', targetId: t.id, resume: o }; break }
       
       if (u.proto.aura?.type === 'heal') {
-        const friend = findNearest(g, u, (e) => e.kind === 'unit' && e.owner === u.owner && e !== u && (e.order.type === 'attack' || e.hp < e.maxHp), 12)
+        const friend = findNearest(g, u, (e) => e.kind === 'unit' && areAllies(g, e.owner, u.owner) && e !== u && (e.order.type === 'attack' || e.hp < e.maxHp), 12)
         if (friend) {
           if (dist(u, friend) > 5) moveToward(g, u, friend.x, friend.z, dt)
           break
@@ -170,7 +186,6 @@ function unitTick(g, u, dt) {
 }
 
 function gatherTick(g, u, o, dt) {
-  if (u.carry) { u.order = { type: 'return', backTo: o }; return }
   let node = g.entities.get(o.nodeId)
   if (!node || node.dead || node.amount <= 0) {
     // No radius cap here either: local resources may be fully depleted, so the
@@ -178,41 +193,36 @@ function gatherTick(g, u, o, dt) {
     const sameType = node?.rtype
     const next = findNearest(g, u, (e) => e.kind === 'resource' && e.amount > 0 && (!sameType || e.rtype === sameType))
       || findNearest(g, u, (e) => e.kind === 'resource' && e.amount > 0)
-    if (next) o.nodeId = next.id
-    else popOrder(u)
-    return
+    if (next) { o.nodeId = next.id; node = next } else { popOrder(u); return }
   }
-
-  const d = dist(u, node) - node.radius
-  if (d > 1.0) { moveToward(g, u, node.x, node.z, dt); u.gatherT = 0 }
+  const d = dist(u, node) - node.proto.radius
+  if (d > 1.2) moveToward(g, u, node.x, node.z, dt)
   else {
-    u.rot = datan2(node.z - u.z, node.x - u.x)
-    u.gatherT += dt
+    u.gatherT = (u.gatherT || 0) + dt
     if (u.gatherT >= GATHER_TIME) {
       u.gatherT = 0
-      node.amount -= CARRY
-      u.carry = { type: node.rtype === 'wood' ? 'w' : 'g', amt: CARRY }
-      g.events.push({ type: 'gather', rtype: node.rtype, x: u.x, z: u.z })
-      if (node.amount <= 0) g.events.push({ type: 'depleted', id: node.id, rtype: node.rtype })
+      const amt = Math.min(CARRY, node.amount)
+      node.amount -= amt
+      u.carry = { type: node.rtype, amount: amt }
       u.order = { type: 'return', backTo: o }
     }
   }
 }
 
 function returnTick(g, u, dt) {
-  const drop = findNearest(g, u, (e) => e.kind === 'building' && e.owner === u.owner && e.proto.dropoff && !e.constructing)
-  if (!drop) { popOrder(u); return }
+  const drop = findNearest(g, u, (e) => e.kind === 'building' && areAllies(g, e.owner, u.owner) && e.proto.dropoff && !e.constructing)
+  if (!drop) return
   const d = dist(u, drop) - drop.proto.radius
   if (d > DROP_RANGE) moveToward(g, u, drop.x, drop.z, dt)
   else {
     if (u.carry) {
       const p = g.players[u.owner]
-      const mul = p.isAI ? g.diff.incomeMul : 1
-      if (u.carry.type === 'w') p.w += u.carry.amt * mul; else p.g += u.carry.amt * mul
+      if (u.carry.type === 'wood') p.w += u.carry.amount
+      else if (u.carry.type === 'gold') p.g += u.carry.amount
       u.carry = null
     }
     const back = u.order.backTo
-    popOrder(u, back ? { ...back } : undefined)
+    if (back) u.order = back; else popOrder(u)
   }
 }
 
@@ -291,7 +301,7 @@ function separation(g) {
     for (let j = i + 1; j < units.length; j++) {
       const b = units[j]
       const dx = b.x - a.x, dz = b.z - a.z
-      const sameOwner = a.owner === b.owner
+      const sameOwner = areAllies(g, a.owner, b.owner)
       const friendlyMul = DIFFICULTY.globals?.separationFriendly ?? 1.75
       const hostileMul = DIFFICULTY.globals?.separationHostile ?? 1.1
       const rr = sameOwner
@@ -323,7 +333,7 @@ function separation(g) {
 function acquire(g, u, radius) {
   return findNearest(g, u, (e) =>
     (e.kind === 'unit' || e.kind === 'building') && e.owner !== undefined &&
-    e.owner >= 0 && e.owner !== u.owner, radius)
+    e.owner >= 0 && !areAllies(g, e.owner, u.owner), radius)
 }
 
 function dealDamage(g, src, target) {
@@ -334,7 +344,7 @@ function dealDamage(g, src, target) {
   applyHit(g, src, target, src.proto.dmg)
   if (src.proto.splash) {
     each(g, (e) => {
-      if (e === target || e.owner === undefined || e.owner < 0 || e.owner === src.owner) return
+      if (e === target || e.owner === undefined || e.owner < 0 || areAllies(g, e.owner, src.owner)) return
       if (e.kind !== 'unit' && e.kind !== 'building') return
       if (dist(e, target) <= src.proto.splash) applyHit(g, src, e, src.proto.dmg * 0.5)
     })
@@ -370,7 +380,7 @@ function buildingTick(g, b, dt) {
   // turret fire
   if (b.proto.kind === 'turret') {
     b.atkT = Math.max(0, b.atkT - dt)
-    const t = findNearest(g, b, (e) => (e.kind === 'unit' || e.kind === 'building') && e.owner >= 0 && e.owner !== b.owner, b.proto.range)
+    const t = findNearest(g, b, (e) => (e.kind === 'unit' || e.kind === 'building') && e.owner >= 0 && !areAllies(g, e.owner, b.owner), b.proto.range)
     if (t && b.atkT <= 0) {
       b.atkT = b.proto.atkCd
       g.events.push({ type: 'shot', from: { x: b.x, z: b.z }, to: { x: t.x, z: t.z }, owner: b.owner, srcProto: 'watchtower', splash: false })
@@ -421,21 +431,21 @@ function buildingTick(g, b, dt) {
 // actually fight off the defender first, which happens through normal combat
 // aggro, not anything the tower itself does.
 function towerTick(g, tower, dt, units) {
-  let sole = -2 // -2 = nobody nearby, -1 would collide with "neutral"
+  let soleOwner = -2 // -2 = nobody nearby
   let contested = false
   for (const e of units) {
     if (contested) break
     if (dist(e, tower) > tower.proto.captureRadius) continue
-    if (sole === -2) sole = e.owner
-    else if (sole !== e.owner) contested = true
+    if (soleOwner === -2) soleOwner = e.owner
+    else if (!areAllies(g, e.owner, soleOwner)) contested = true
   }
-  if (!contested && sole !== -2 && sole !== tower.owner) {
+  if (!contested && soleOwner !== -2 && !areAllies(g, soleOwner, tower.owner)) {
     tower.captureProgress += dt
     if (tower.captureProgress >= tower.proto.captureTime) {
       const prevOwner = tower.owner
-      tower.owner = sole
+      tower.owner = soleOwner
       tower.captureProgress = 0
-      g.events.push({ type: 'towerCaptured', id: tower.id, owner: sole, prevOwner })
+      g.events.push({ type: 'towerCaptured', id: tower.id, owner: soleOwner, prevOwner })
     }
   } else {
     tower.captureProgress = 0
@@ -464,11 +474,18 @@ function auras(g, dt) {
   each(g, (e) => { if (e.kind === 'unit') { e.buffSpeed = 1; e.buffAtk = 1 } })
   for (const c of casters) {
     const a = c.proto.aura
-    each(g, (e) => {
-      if (e.owner !== c.owner || e === c || e.kind !== 'unit') return
-      if (dist(c, e) > a.radius) return
-      if (a.type === 'heal') e.hp = Math.min(e.maxHp, e.hp + a.rate * dt)
-    })
+    if (a.type === 'heal') {
+      if (c.maxMana > 0 && c.mana <= 0) continue
+      each(g, (e) => {
+        if (!areAllies(g, e.owner, c.owner) || e.kind !== 'unit' || e.hp >= e.maxHp) return
+        if (dist(c, e) > a.radius) return
+        if (c.maxMana > 0 && c.mana <= 0) return
+        e.hp = Math.min(e.maxHp, e.hp + a.rate * dt)
+        if (a.manaCost && c.maxMana > 0) {
+          c.mana = Math.max(0, c.mana - a.manaCost * dt)
+        }
+      })
+    }
   }
 }
 
@@ -500,11 +517,21 @@ function winCheck(g) {
       g.events.push({ type: 'eliminated', owner: i })
     }
   }
-  // This branch is derived from `alive[]`, which every client computes identically
-  // from shared entity state, so both sides of an online match reach g.over on the
-  // same tick — only the win/loss label differs, per each client's own localPlayer.
-  if (!g.players[g.localPlayer].alive) g.over = 'loss'
-  else if (g.players.filter((p) => p.alive).length <= 1) g.over = 'win'
+
+  const aliveTeams = new Set()
+  for (let i = 0; i < g.players.length; i++) {
+    if (g.players[i].alive) aliveTeams.add(g.players[i].team)
+  }
+
+  const localTeam = g.players[g.localPlayer]?.team
+  const localTeamAlive = g.players.some((p) => p.alive && p.team === localTeam)
+
+  if (!localTeamAlive) {
+    g.over = 'loss'
+  } else if (aliveTeams.size <= 1) {
+    const winningTeam = Array.from(aliveTeams)[0]
+    g.over = localTeam === winningTeam ? 'win' : 'loss'
+  }
 }
 
 // ---- command layer (deterministic, network-ready) ---------------------------
@@ -631,6 +658,21 @@ export function applyCommand(g, c) {
       }
       break
     }
+    case 'summon': {
+      const u = g.entities.get(c.casterId)
+      const reqMana = u?.proto?.summonCost || 100
+      if (u && !u.dead && u.owner === c.p && u.protoId === 'sorcerer' && u.mana >= reqMana) {
+        u.mana -= reqMana
+        const spawnDist = 1.6
+        const gx = u.x + dcos(u.rot) * spawnDist
+        const gz = u.z + dsin(u.rot) * spawnDist
+        const golem = spawnUnit(g, u.owner, 'golem', gx, gz)
+        const enemy = acquire(g, golem, 35)
+        if (enemy) golem.order = { type: 'attackmove', x: enemy.x, z: enemy.z }
+        g.events.push({ type: 'summon', casterId: u.id, golemId: golem.id, owner: u.owner })
+      }
+      break
+    }
   }
 }
 
@@ -656,7 +698,7 @@ export function checksum(g) {
   return h >>> 0
 }
 
-const ORDER_CODE = { idle: 1, move: 2, attackmove: 3, attack: 4, gather: 5, return: 6, build: 7, repair: 8, patrol: 9, stop: 10 }
+const ORDER_CODE = { idle: 1, move: 2, attackmove: 3, attack: 4, gather: 5, return: 6, build: 7, repair: 8, patrol: 9, stop: 10, summon: 11 }
 
 export function setOrder(u, ord, queue) {
   if (queue && u.order.type !== 'idle') {
@@ -866,9 +908,17 @@ function aiThink(g, owner, dt) {
         tryQueueUnit(g, a, pick)
       }
     }
-    if (p.age >= 2 && temple && !temple.constructing && temple.queue.length === 0 && g.rng() > 0.7) {
-      tryQueueUnit(g, temple, 'priest')
+    if (p.age >= 2 && temple && !temple.constructing && temple.queue.length === 0) {
+      const roll = g.rng()
+      if (roll > 0.6) tryQueueUnit(g, temple, 'sorcerer')
+      else if (roll > 0.2) tryQueueUnit(g, temple, 'priest')
     }
+  }
+
+  // AI Sorcerer auto-summoning
+  const sorcs = listAI(g, owner, (e) => e.kind === 'unit' && e.protoId === 'sorcerer' && e.mana >= 100)
+  for (const s of sorcs) {
+    applyCommand(g, { t: 'summon', p: owner, casterId: s.id })
   }
 
   // attack waves

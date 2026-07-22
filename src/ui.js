@@ -246,6 +246,24 @@ export class UI {
         }
         row.appendChild(b)
       }
+
+      if (first.protoId === 'sorcerer') {
+        const canSummon = first.mana >= (first.proto.summonCost || 100)
+        const b = document.createElement('button')
+        b.className = 'ordchip' + (canSummon ? '' : ' disabled')
+        b.innerHTML = '🗿'
+        b.style.background = canSummon ? 'rgba(155, 81, 224, 0.45)' : 'rgba(255,255,255,0.05)'
+        b.style.borderColor = canSummon ? '#9b51e0' : 'rgba(255,255,255,0.2)'
+        this.attachTip(b, `<b>Summon Golem</b> (100 Mana)<br><span class="tip-desc">Summon a massive temporary stone construct that lasts 10 seconds.</span>${!canSummon ? `<br><span class="tip-lock">💧 Recharging mana (${Math.floor(first.mana)}/100)</span>` : ''}`)
+        if (canSummon) {
+          b.onclick = () => {
+            audio.click()
+            issue(this.game, { t: 'summon', p: this.me, casterId: first.id })
+            this.toast('Summoned Golem!')
+          }
+        }
+        row.appendChild(b)
+      }
     }
 
     // ---- action buttons ----
@@ -586,6 +604,8 @@ export class UI {
       let statsHtml = ''
       if (first.kind === 'unit') {
         statsHtml = `<span class="stat">❤ ${Math.ceil(first.hp)}/${first.maxHp}</span>` +
+          (first.maxMana ? `<span class="stat" style="color:#56ccf2;">💧 ${Math.floor(first.mana)}/${first.maxMana}</span>` : '') +
+          (first.ttl ? `<span class="stat warn">⏱ ${Math.ceil(first.ttl)}s</span>` : '') +
           (proto.dmg ? `<span class="stat">⚔ ${proto.dmg}</span>` : '') +
           `<span class="stat role">${proto.role}</span>`
       } else {
@@ -608,6 +628,12 @@ export class UI {
         } else if (first.research) {
           progressHtml = `<div class="pbar"><div style="width:${Math.round((1 - first.research.t / first.research.total) * 100)}%"></div></div>`
         }
+      } else if (first.kind === 'unit' && first.maxMana > 0) {
+        const manaPct = Math.min(100, Math.max(0, Math.round((first.mana / first.maxMana) * 100)))
+        progressHtml = `<div class="pbar" title="Mana"><div style="width:${manaPct}%; background:#2f80ed;"></div></div>`
+      } else if (first.kind === 'unit' && first.ttl > 0) {
+        const ttlPct = Math.min(100, Math.max(0, Math.round((first.ttl / (first.proto.ttl || 10)) * 100)))
+        progressHtml = `<div class="pbar" title="Lifespan"><div style="width:${ttlPct}%; background:#e0483a;"></div></div>`
       }
       progEl.innerHTML = progressHtml
     }
@@ -623,6 +649,7 @@ export function homeScreen(onStart) {
   el.style.display = 'flex'
   let aiCount = 1
   let difficulty = 'normal'
+  let teamFormat = 'ffa' // 'ffa' | 'teams'
 
   const aiWrap = $('opt-ai')
   aiWrap.innerHTML = ''
@@ -636,6 +663,23 @@ export function homeScreen(onStart) {
       b.classList.add('sel')
     }
     aiWrap.appendChild(b)
+  }
+
+  const teamFormatWrap = $('opt-team-format')
+  if (teamFormatWrap) {
+    teamFormatWrap.innerHTML = ''
+    const formats = { 'ffa': 'Free for All', 'teams': 'Teams (Red vs Blue)' }
+    for (const key of Object.keys(formats)) {
+      const b = document.createElement('button')
+      b.className = 'opt' + (key === teamFormat ? ' sel' : '')
+      b.textContent = formats[key]
+      b.onclick = () => {
+        teamFormat = key
+        teamFormatWrap.querySelectorAll('.opt').forEach((x) => x.classList.remove('sel'))
+        b.classList.add('sel')
+      }
+      teamFormatWrap.appendChild(b)
+    }
   }
 
   const diffWrap = $('opt-diff')
@@ -657,7 +701,12 @@ export function homeScreen(onStart) {
 
   $('btn-start').onclick = () => {
     el.style.display = 'none'
-    onStart({ mode: 'ai', aiCount, difficulty, mapSettings: getMapSettings() })
+    let teams = null
+    if (teamFormat === 'teams') {
+      // Slot 0 (Human) on Team 0 (Red), AI rivals on Team 1 (Blue)
+      teams = [0, 1, 1, 1]
+    }
+    onStart({ mode: 'ai', aiCount, difficulty, mapSettings: getMapSettings(), teams })
   }
 
   setupOnlineTab(el, onStart, getMapSettings)
@@ -766,6 +815,8 @@ function setupOnlineTab(homeEl, onStart, getMapSettings) {
 
   let net = null
   let isHost = false
+  let currentTeams = [0, 1, 0, 1] // Slot 0 Red, Slot 1 Blue, Slot 2 Red, Slot 3 Blue
+
   const showChoice = () => {
     net?.close(); net = null
     choice.style.display = ''; joinForm.style.display = 'none'; status.classList.remove('show')
@@ -784,16 +835,39 @@ function setupOnlineTab(homeEl, onStart, getMapSettings) {
   }
   // Room supports up to 4 players; the host decides when to start (not an
   // auto-start on the 2nd join), so a LAN party can wait for everyone first.
-  const showLobby = (slots) => {
+  const showLobby = (slots, teams) => {
+    if (Array.isArray(teams)) currentTeams = teams
     $('lobby-spinner').style.display = 'none'
     $('lobby-players').style.display = 'flex'
-    $('lobby-players').innerHTML = slots
-      .map((s) => {
-        let name = PLAYER_NAMES[s]
-        if (s === 0 && isHost && currentUser) name = currentUser.email.split('@')[0]
-        return `<span class="slot-chip">${name}${s === 0 ? ' (host)' : ''}</span>`
-      })
-      .join('')
+    $('lobby-players').style.flexDirection = 'column'
+    $('lobby-players').style.gap = '8px'
+
+    const totalActive = Math.min(4, slots.length + (isHost ? onlineAiCount : 0))
+
+    $('lobby-players').innerHTML = Array.from({ length: totalActive }, (_, s) => {
+      const isConnected = slots.includes(s)
+      let name = PLAYER_NAMES[s]
+      if (s === 0 && isHost && currentUser) name = currentUser.email.split('@')[0]
+      if (!isConnected) name = `${PLAYER_NAMES[s]} (AI)`
+      const teamLabel = currentTeams[s] === 0 ? '🔴 Red Team' : '🔵 Blue Team'
+      return `
+        <div class="slot-chip" style="display:flex; align-items:center; justify-content:space-between; width:100%; gap:12px; padding:6px 12px; border-radius:6px; background:rgba(255,255,255,0.06);">
+          <span>${name}${s === 0 ? ' (host)' : ''}</span>
+          <button class="opt team-toggle-btn" data-slot="${s}" style="padding:4px 10px; font-size:12px; cursor:pointer;">${teamLabel}</button>
+        </div>
+      `
+    }).join('')
+
+    $('lobby-players').querySelectorAll('.team-toggle-btn').forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation()
+        const s = parseInt(btn.getAttribute('data-slot'), 10)
+        currentTeams[s] = (currentTeams[s] === 0) ? 1 : 0
+        if (net) net.setTeams(currentTeams)
+        showLobby(slots, currentTeams)
+      }
+    })
+
     $('lobby-msg').textContent = isHost
       ? (slots.length < 2 ? 'Share this code — waiting for at least one more player…' : 'Start whenever you\'re ready, or wait for more players (up to 4).')
       : 'Waiting for the host to start the match…'
@@ -828,16 +902,16 @@ function setupOnlineTab(homeEl, onStart, getMapSettings) {
     showStatus('Connecting to relay…')
     net = new NetClient(relayInput.value.trim())
     net.connect().then(() => {
-      net.host(getMapSettings(), onlineAiCount)
+      net.host(getMapSettings(), onlineAiCount, currentTeams)
       net.onMessage = (msg) => {
         if (msg.type === 'hosted') {
           $('lobby-code').textContent = msg.code
           $('lobby-code').style.display = ''
         } else if (msg.type === 'lobby') {
-          showLobby(msg.slots)
+          showLobby(msg.slots, msg.teams)
         } else if (msg.type === 'start') {
           homeEl.style.display = 'none'
-          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings, playerCount: msg.playerCount, aiCount: msg.aiCount })
+          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings, playerCount: msg.playerCount, aiCount: msg.aiCount, teams: msg.teams || currentTeams })
         }
       }
       net.onClose = () => showStatus('Connection lost. Try again.')
@@ -853,11 +927,11 @@ function setupOnlineTab(homeEl, onStart, getMapSettings) {
     net.connect().then(() => {
       net.join(code)
       net.onMessage = (msg) => {
-        if (msg.type === 'lobby') showLobby(msg.slots)
+        if (msg.type === 'lobby') showLobby(msg.slots, msg.teams)
         else if (msg.type === 'error') showStatus(msg.reason || 'Could not join that room.')
         else if (msg.type === 'start') {
           homeEl.style.display = 'none'
-          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings, playerCount: msg.playerCount, aiCount: msg.aiCount })
+          onStart({ mode: 'online', net, seed: msg.seed, slot: msg.slot, mapSettings: msg.mapSettings, playerCount: msg.playerCount, aiCount: msg.aiCount, teams: msg.teams || currentTeams })
         }
       }
       net.onClose = () => showStatus('Connection lost. Try again.')

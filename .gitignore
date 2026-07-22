@@ -8,3 +8,4 @@ exampleassets/assets/
 # local env files
 .env
 .env.local
+.claude/
