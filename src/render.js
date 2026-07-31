@@ -27,6 +27,7 @@ export async function loadAssets(onProgress) {
     const box = new THREE.Box3().setFromObject(gltf.scene)
     const size = box.getSize(new THREE.Vector3())
     grp.userData.size = size
+    grp.userData.animations = gltf.animations
 
     if (!name.includes('golem')) {
       const center = box.getCenter(new THREE.Vector3())
@@ -56,6 +57,8 @@ function modelInstance(name, footprint) {
   const size = src.userData.size
   const s = footprint / Math.max(size.x, size.z)
   clone.scale.setScalar(s)
+  clone.userData.size = size
+  if (src.userData.animations) clone.userData.animations = src.userData.animations
   return clone
 }
 
@@ -247,20 +250,30 @@ function makePerson(role, teamColor, radius = 0.55) {
 function makeGolem(teamColor, radius = 1.2) {
   const assetName = MODELS.units?.golem || 'golem.glb'
   if (CACHE.has(assetName)) {
-    const body = modelInstance(assetName, radius * 2.5)
-    const teamMat = getTeamMaterial(teamColor)
+    const body = modelInstance(assetName, radius * 2.6)
+    let mixer = null
+    const actions = {}
+    if (body.userData.animations && body.userData.animations.length > 0) {
+      mixer = new THREE.AnimationMixer(body)
+      for (const clip of body.userData.animations) {
+        const act = mixer.clipAction(clip)
+        const lname = clip.name.toLowerCase()
+        if (lname.includes('walk')) actions.walk = act
+        else if (lname.includes('attack')) actions.attack = act
+        else if (lname.includes('idle')) actions.idle = act
+        else if (lname.includes('death')) actions.death = act
+      }
+      if (actions.idle) actions.idle.play()
+      else if (actions.walk) actions.walk.play()
+    }
     body.traverse((m) => {
       if (m.isMesh) {
         m.frustumCulled = false
         m.material = m.material.clone()
         m.material.side = THREE.DoubleSide
-        if (m.name === 'stone') {
-          m.material.color.setHex(0x6c727c) // stone color
-          m.material.roughness = 0.8
-        }
       }
     })
-    return { grp: body }
+    return { grp: body, mixer, actions }
   }
 
   const s = radius / 1.0
@@ -580,6 +593,10 @@ export class Renderer {
     }
 
     const t = performance.now() / 1000
+    const nowMs = performance.now()
+    const dt = Math.min(0.1, (nowMs - (this.lastSyncT || nowMs)) / 1000)
+    this.lastSyncT = nowMs
+
     for (const [id, grp] of this.meshes) {
       const e = g.entities.get(id)
       if (!e || e.dead) { this.scene.remove(grp); this.meshes.delete(id); continue }
@@ -589,9 +606,22 @@ export class Renderer {
         const moved = Math.hypot(e.x - (ud.px ?? e.x), e.z - (ud.pz ?? e.z))
         ud.walk = (ud.walk ?? 0) + moved * 2.4
         ud.px = e.x; ud.pz = e.z
-        const hop = Math.abs(Math.sin(ud.walk * 3)) * Math.min(0.14, moved * 55)
+        const hop = ud.mixer ? 0 : Math.abs(Math.sin(ud.walk * 3)) * Math.min(0.14, moved * 55)
         grp.position.set(e.x, hop, e.z)
         grp.rotation.y = -e.rot + Math.PI / 2
+        if (ud.mixer) {
+          ud.mixer.update(dt)
+          const isAttacking = e.order?.type === 'attack' || (e.atkT ?? 0) > 0
+          const isMoving = moved > 0.005 || e.order?.type === 'move' || e.order?.type === 'attackmove'
+          const targetAction = isAttacking ? (ud.actions.attack || ud.actions.walk)
+            : isMoving ? (ud.actions.walk || ud.actions.idle)
+            : (ud.actions.idle || ud.actions.walk)
+          if (targetAction && ud.activeAction !== targetAction) {
+            if (ud.activeAction) ud.activeAction.fadeOut(0.2)
+            targetAction.reset().fadeIn(0.2).play()
+            ud.activeAction = targetAction
+          }
+        }
         if (ud.armL) {
           const swing = Math.sin(ud.walk * 3) * Math.min(0.7, 0.2 + moved * 120)
           ud.armL.rotation.x = swing
@@ -732,6 +762,8 @@ export class Renderer {
       grp.add(built.grp)
       grp.userData.armL = built.armL
       grp.userData.armR = built.armR
+      grp.userData.mixer = built.mixer
+      grp.userData.actions = built.actions
       grp.userData.carryW = built.grp.userData?.carryW
       grp.userData.carryG = built.grp.userData?.carryG
     }
