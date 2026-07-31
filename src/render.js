@@ -13,12 +13,14 @@ export async function loadAssets(onProgress) {
   for (const pair of Object.values(MODELS.buildings)) pair.forEach((n) => names.add(n))
   for (const list of Object.values(MODELS.resources)) list.forEach((n) => names.add(n))
   for (const list of Object.values(MODELS.scenery)) list.forEach((n) => names.add(n))
+  if (MODELS.units) for (const n of Object.values(MODELS.units)) names.add(n)
   MODELS.treasure.forEach((n) => names.add(n))
   const list = [...names]
   const loader = new GLTFLoader()
   let done = 0
   await Promise.all(list.map(async (name) => {
-    const gltf = await loader.loadAsync(`/models/${name}.gltf`)
+    const fileUrl = (name.endsWith('.glb') || name.endsWith('.gltf')) ? `/models/${name}` : `/models/${name}.gltf`
+    const gltf = await loader.loadAsync(fileUrl)
     const grp = new THREE.Group()
     grp.add(gltf.scene)
     const box = new THREE.Box3().setFromObject(gltf.scene)
@@ -229,6 +231,12 @@ function makePerson(role, teamColor, radius = 0.55) {
 }
 
 function makeGolem(teamColor, radius = 1.2) {
+  const assetName = MODELS.units?.golem || 'golem.glb'
+  if (CACHE.has(assetName)) {
+    const body = modelInstance(assetName, radius * 2.5)
+    return { grp: body }
+  }
+
   const s = radius / 1.0
   const grp = new THREE.Group()
   const rockMat = lamb(0x6e6e6e)

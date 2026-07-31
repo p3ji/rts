@@ -74,6 +74,9 @@ export const MODELS = {
     windmill: ['Windmill_FirstAge'],
   },
   treasure: ['Crate_Stack1'],
+  units: {
+    golem: 'golem.glb',
+  },
 }
 
 // Building footprint (world units across) each model is scaled to
