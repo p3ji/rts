@@ -379,7 +379,7 @@ export function spawnNeutralTower(g, x, z) {
     id: g.nextId++, kind: 'tower', protoId: 'neutraltower', proto: NEUTRAL_TOWER,
     x, z, rot: 0,
     hp: NEUTRAL_TOWER.hp, maxHp: NEUTRAL_TOWER.hp, lastHit: -99,
-    owner: -1, captureProgress: 0,
+    owner: -1, captureProgress: 0, queue: [],
     dead: false,
   }
   g.entities.set(e.id, e)

@@ -40,7 +40,7 @@ export function tick(g, dt) {
   // run AI controllers
   for (let i = 0; i < g.players.length; i++) {
     const p = g.players[i]
-    if (p.isAI && p.alive) aiTick(g, i, dt)
+    if (p.isAI && p.alive) aiThink(g, i, dt)
   }
 
   // unit updates
@@ -409,7 +409,7 @@ function buildingTick(g, b, dt) {
   }
 
   // production
-  if (b.queue.length > 0) {
+  if (b.queue && b.queue.length > 0) {
     const item = b.queue[0]
     if (!item.started) {
       const proto = UNITS[item.protoId]
@@ -584,7 +584,9 @@ export function scheduleRemote(g, execTick, cmd) {
 
 function resolveUnits(g, ids) {
   const out = []
-  for (const id of ids) { const e = g.entities.get(id); if (e && !e.dead && e.kind === 'unit') out.push(e) }
+  if (!ids) return out
+  const list = Array.isArray(ids) ? ids : [ids]
+  for (const id of list) { const e = g.entities.get(id); if (e && !e.dead && e.kind === 'unit') out.push(e) }
   return out
 }
 
