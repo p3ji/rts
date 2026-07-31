@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js'
 import { BUILDINGS, UNITS, MODELS, MODEL_FOOTPRINT, PLAYER_COLORS } from './data.js'
 import { MAP, each, isVisible, isExplored } from './state.js'
 import { audio } from './audio.js'
@@ -40,7 +41,7 @@ export async function loadAssets(onProgress) {
 function modelInstance(name, footprint) {
   const src = CACHE.get(name)
   if (!src) return new THREE.Group()
-  const clone = src.clone(true)
+  const clone = SkeletonUtils.clone(src)
   const size = src.userData.size
   const s = footprint / Math.max(size.x, size.z)
   clone.scale.setScalar(s)
@@ -234,6 +235,15 @@ function makeGolem(teamColor, radius = 1.2) {
   const assetName = MODELS.units?.golem || 'golem.glb'
   if (CACHE.has(assetName)) {
     const body = modelInstance(assetName, radius * 2.5)
+    body.traverse((m) => {
+      if (m.isMesh) {
+        m.material = m.material.clone()
+        if (m.name === 'stone') {
+          m.material.color.setHex(0x6c727c) // stone color
+          m.material.roughness = 0.8
+        }
+      }
+    })
     return { grp: body }
   }
 
