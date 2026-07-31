@@ -25,12 +25,16 @@ export async function loadAssets(onProgress) {
     const grp = new THREE.Group()
     grp.add(gltf.scene)
     const box = new THREE.Box3().setFromObject(gltf.scene)
-    const center = box.getCenter(new THREE.Vector3())
-    gltf.scene.position.x -= center.x
-    gltf.scene.position.z -= center.z
-    gltf.scene.position.y -= box.min.y
     const size = box.getSize(new THREE.Vector3())
     grp.userData.size = size
+
+    if (!name.includes('golem')) {
+      const center = box.getCenter(new THREE.Vector3())
+      gltf.scene.position.x -= center.x
+      gltf.scene.position.z -= center.z
+      gltf.scene.position.y -= box.min.y
+    }
+
     grp.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true } })
     CACHE.set(name, grp)
     done++
@@ -90,7 +94,9 @@ export function generatePortraits() {
     shoot(modelInstance(buildingModelName(id, 1), MODEL_FOOTPRINT[id]), id)
   }
   for (const id of Object.keys(UNITS)) {
-    const obj = id === 'catapult' ? makeCatapult(0x8a7350, UNITS[id].radius) : makePerson(id, 0xd8b04a, UNITS[id].radius).grp
+    const obj = id === 'catapult' ? makeCatapult(0x8a7350, UNITS[id].radius)
+      : id === 'golem' ? makeGolem(0x8a7350, UNITS[id].radius).grp
+      : makePerson(id, 0xd8b04a, UNITS[id].radius).grp
     obj.rotation.y = -0.5
     shoot(obj, id)
   }
