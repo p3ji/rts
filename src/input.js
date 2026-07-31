@@ -1,5 +1,5 @@
 import { BUILDINGS, PLAYER_COLORS } from './data.js'
-import { each, canAfford, MAP } from './state.js'
+import { each, canAfford, MAP, areAllies } from './state.js'
 import { issue, checkPlacement } from './sim.js'
 
 const ids = (list) => list.map((u) => u.id)
@@ -400,7 +400,7 @@ export class Input {
         this.r.orderFx(target.x, target.z, myColor)
         return
       }
-      if (target.owner === me) {
+      if (areAllies(g, target.owner, me)) {
         // friendly: resume construction or repair
         if (target.kind === 'building' && target.constructing) {
           const workers = units.filter((u) => u.proto.worker)

@@ -66,6 +66,12 @@ export function tick(g, dt) {
   auras(g, dt)
   separation(g)
   winCheck(g)
+
+  if (g.isOnline) {
+    const et = g.tick + g.inputDelay
+    g.onTickEnd?.(et, g.localCommandsThisTick)
+    g.localCommandsThisTick = []
+  }
 }
 
 // ---- unit logic ------------------------------------------------------------
@@ -186,6 +192,7 @@ function unitTick(g, u, dt) {
 }
 
 function gatherTick(g, u, o, dt) {
+  if (u.carry) { u.order = { type: 'return', backTo: o }; return }
   let node = g.entities.get(o.nodeId)
   if (!node || node.dead || node.amount <= 0) {
     // No radius cap here either: local resources may be fully depleted, so the
