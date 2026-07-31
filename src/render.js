@@ -35,7 +35,14 @@ export async function loadAssets(onProgress) {
       gltf.scene.position.y -= box.min.y
     }
 
-    grp.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true } })
+    grp.traverse((m) => {
+      if (m.isMesh) {
+        m.castShadow = true
+        m.receiveShadow = true
+        m.frustumCulled = false
+        if (m.material) m.material.side = THREE.DoubleSide
+      }
+    })
     CACHE.set(name, grp)
     done++
     onProgress?.(done / list.length)
@@ -241,9 +248,12 @@ function makeGolem(teamColor, radius = 1.2) {
   const assetName = MODELS.units?.golem || 'golem.glb'
   if (CACHE.has(assetName)) {
     const body = modelInstance(assetName, radius * 2.5)
+    const teamMat = getTeamMaterial(teamColor)
     body.traverse((m) => {
       if (m.isMesh) {
+        m.frustumCulled = false
         m.material = m.material.clone()
+        m.material.side = THREE.DoubleSide
         if (m.name === 'stone') {
           m.material.color.setHex(0x6c727c) // stone color
           m.material.roughness = 0.8
